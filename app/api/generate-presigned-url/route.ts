@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 import { v4 as uuidv4 } from 'uuid';
 
+export const maxDuration = 30;
+
 export async function POST(request: NextRequest) {
   try {
     // 환경 변수 검증

@@ -1,12 +1,4 @@
 {
-  "functions": {
-    "app/api/upload-with-presigned/route.ts": {
-      "maxDuration": 30
-    },
-    "app/api/generate-presigned-url/route.ts": {
-      "maxDuration": 30
-    }
-  },
   "rewrites": [
     {
       "source": "/api/(.*)",
