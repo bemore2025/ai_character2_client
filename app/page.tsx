@@ -2,12 +2,41 @@
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
+import PasswordModal from "./components/PasswordModal";
 
 export default function Home() {
   const router = useRouter();
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  useEffect(() => {
+    // 인증 상태 확인
+    const checkAuth = async () => {
+      try {
+        const response = await fetch("/api/check-auth");
+        const data = await response.json();
+        if (data.authenticated) {
+          setIsAuthenticated(true);
+        } else {
+          setShowPasswordModal(true);
+        }
+      } catch (error) {
+        setShowPasswordModal(true);
+      }
+    };
+    checkAuth();
+  }, []);
+
+  const handlePasswordSuccess = () => {
+    setShowPasswordModal(false);
+    setIsAuthenticated(true);
+  };
 
   const handleClick = () => {
-    router.push("/intro");
+    if (isAuthenticated) {
+      router.push("/intro");
+    }
   };
 
   return (
@@ -41,20 +70,21 @@ export default function Home() {
         </div>
       </div> */}
 
-      <div 
-        className="flex flex-col items-center justify-end z-30 absolute bottom-[278px]" 
+      <div
+        className="flex flex-col items-center justify-end z-30 absolute bottom-[278px]"
         style={{ fontFamily: 'MuseumClassic, serif' }}
       >
         <div>
-          <Button 
+          <Button
             className="w-[1550px] h-[280px] text-[128px] text-[#451F0D] bg-[#E4BE50] border-5 border-[#471F0D] rounded-[60px] font-bold hover:bg-[#D4AE40] transition-colors duration-200"
             onClick={handleClick}
+            disabled={!isAuthenticated}
           >
             화면을 눌러주세요
           </Button>
         </div>
-        
-        <div 
+
+        <div
           className="w-full h-[136px] text-[48px] text-black drop-shadow-lg mt-[41px] font-bold"
           style={{ lineHeight: '68px', letterSpacing: '-2%' }}
         >
@@ -62,6 +92,11 @@ export default function Home() {
           <p className="text-center text-[48px]">생성된 이미지는 포토카드로 제작할 수 있습니다.</p>
         </div>
       </div>
+
+      <PasswordModal
+        isOpen={showPasswordModal}
+        onSuccess={handlePasswordSuccess}
+      />
     </div>
   );
 }

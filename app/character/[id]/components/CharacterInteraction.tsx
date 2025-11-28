@@ -18,6 +18,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import Image from "next/image";
 import { Character } from "../types";
+import { saveImageRecord, pollForImageResult, requestImageProcessing } from "@/utils/imagePolling";
 
 // 한글 조합을 위한 유틸리티 함수들
 const CHOSUNG = ['ㄱ', 'ㄲ', 'ㄴ', 'ㄷ', 'ㄸ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅃ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅉ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ'];
@@ -202,27 +203,116 @@ const processKoreanInput = (currentText: string, newChar: string): string => {
 interface CharacterInteractionProps {
   character: Character | null;
   characterId: string;
+  existingImage?: string;
 }
 
-export default function CharacterInteraction({ character, characterId }: CharacterInteractionProps) {
+export default function CharacterInteraction({ character, characterId, existingImage }: CharacterInteractionProps) {
   const router = useRouter();
   const [isMicActive, setIsMicActive] = useState(false);
   const [situation, setSituation] = useState('');
   const [showPromptContent, setShowPromptContent] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isFaceSwapping, setIsFaceSwapping] = useState(false);
   const [modalInput, setModalInput] = useState('');
   const [isKeyboardPressed, setIsKeyboardPressed] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { playSound } = useButtonSound();
   const { setMuted } = useAudioStore();
-  const { 
-    isRecording, 
-    transcript, 
-    isProcessing, 
+  const {
+    isRecording,
+    transcript,
+    isProcessing,
     timeLeft,
     toggleRecording,
     setTranscript
   } = useVoiceRecognition();
+
+  // existingImage가 있으면 자동으로 페이스 스왑 진행
+  useEffect(() => {
+    const processExistingImage = async () => {
+      if (!existingImage || isFaceSwapping || !characterId) {
+        return;
+      }
+
+      setIsFaceSwapping(true);
+
+      try {
+        // 1. image 테이블에 job_id 저장
+        const saveResult = await saveImageRecord(existingImage);
+
+        if (!saveResult.success || !saveResult.jobId) {
+          toast({
+            title: "이미지 저장 실패",
+            description: saveResult.error || "이미지 저장에 실패했습니다.",
+          });
+          setIsFaceSwapping(false);
+          return;
+        }
+
+        // 2. AWS API에 이미지 처리 요청
+        const awsResult = await requestImageProcessing(
+          existingImage,
+          characterId,
+          "재생성", // situation은 재생성으로 설정
+          saveResult.jobId
+        );
+
+        if (!awsResult.success) {
+          toast({
+            title: "이미지 처리 요청 실패",
+            description: awsResult.error || "이미지 처리 요청에 실패했습니다.",
+          });
+          setIsFaceSwapping(false);
+          return;
+        }
+
+        // 3. 결과 대기
+        const pollingResult = await pollForImageResult(
+          saveResult.jobId,
+          {
+            maxAttempts: 60,
+            intervalMs: 5000,
+          }
+        );
+
+        if (pollingResult.success && pollingResult.data?.result) {
+          const resultData = pollingResult.data.result;
+
+          let backgroundImageUrl = '';
+
+          if (resultData.background_removed_image_url) {
+            backgroundImageUrl = resultData.background_removed_image_url;
+          } else if (resultData.result_image_url) {
+            backgroundImageUrl = resultData.result_image_url;
+          }
+
+          if (backgroundImageUrl) {
+            router.push(`/complete?character=${characterId}&backgroundImage=${encodeURIComponent(backgroundImageUrl)}&jobId=${saveResult.jobId}`);
+          } else {
+            toast({
+              title: "이미지 URL을 찾을 수 없습니다",
+              description: "생성된 이미지 URL을 찾을 수 없습니다.",
+            });
+            setIsFaceSwapping(false);
+          }
+        } else {
+          toast({
+            title: "이미지 생성 실패",
+            description: "이미지 생성에 실패했습니다.",
+          });
+          setIsFaceSwapping(false);
+        }
+      } catch (error) {
+        toast({
+          title: "오류 발생",
+          description: error instanceof Error ? error.message : "알 수 없는 오류가 발생했습니다.",
+        });
+        setIsFaceSwapping(false);
+      }
+    };
+
+    processExistingImage();
+  }, [existingImage, characterId, isFaceSwapping, router]);
 
   // 음성 인식 결과를 상황 설명으로 설정 (녹음이 끝났을 때만)
   useEffect(() => {
@@ -314,11 +404,16 @@ export default function CharacterInteraction({ character, characterId }: Charact
     }, 300);
   };
 
-  // 캐릭터 정보가 없으면 로딩 표시
-  if (!character) {
+  // 캐릭터 정보가 없거나 이미지 처리 중이면 로딩 표시
+  if (!character || isFaceSwapping) {
     return (
-      <div className="flex items-center justify-center h-screen">
+      <div className="flex flex-col items-center justify-center h-screen gap-8">
         <Loader2 className="w-40 h-40 animate-spin text-[#481F0E]" />
+        {isFaceSwapping && (
+          <div className="text-[64px] text-[#481F0E] font-bold">
+            이미지 생성 중...
+          </div>
+        )}
       </div>
     );
   }

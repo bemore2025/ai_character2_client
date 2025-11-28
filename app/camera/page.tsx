@@ -17,6 +17,7 @@ import { ProcessingStatus } from "./components/ProcessingStatus";
 import { FaceGuide } from "./components/FaceGuide";
 import { CountdownOverlay } from "./components/CountdownOverlay";
 import { PageProps, CameraPageContentProps, CameraClientProps } from "./types";
+import { useImageStore } from "@/app/store/useImageStore";
 
 export default function Page({ searchParams }: PageProps) {
   return (
@@ -43,6 +44,7 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
   const [showLottieLoader, setShowLottieLoader] = useState(false);
   const [processingMessage, setProcessingMessage] = useState("이미지 생성중...");
   const { playSound } = useButtonSound();
+  const { setImageData } = useImageStore();
   const flashSoundRef = useRef<HTMLAudioElement | null>(null);
   const videoElementRef = useRef<HTMLVideoElement | null>(null);
 
@@ -173,6 +175,13 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
           
           if (backgroundImageUrl) {
             console.log('[Camera] Navigating to complete page with background image URL...');
+            // Zustand store에 이미지 정보 저장
+            setImageData({
+              characterId: characterId,
+              situation: situation || "변신",
+              backgroundRemovedImageUrl: backgroundImageUrl,
+              jobId: saveResult.jobId,
+            });
             router.push(`/complete?character=${characterId}&backgroundImage=${encodeURIComponent(backgroundImageUrl)}&jobId=${saveResult.jobId}`);
           } else {
             toast("이미지 URL을 찾을 수 없습니다", {

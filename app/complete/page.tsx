@@ -8,9 +8,21 @@ import { useButtonSound } from "@/app/components/ButtonSound";
 import domtoimage from "dom-to-image-more";
 import { toast } from "@/components/ui/use-toast";
 import { MessageResponse, Character, CharacterResponse } from "./types";
+import { IoMdRefresh } from "react-icons/io";
+import { useImageStore } from "@/app/store/useImageStore";
+import { saveImageRecord, pollForImageResult, requestImageProcessing } from "@/utils/imagePolling";
+import Lottie from "lottie-react";
+import loaderAnimation from "@/public/loader.json";
 
 function CompletePageContent() {
   const router = useRouter();
+  const {
+    characterId: storedCharacterId,
+    situation: storedSituation,
+    backgroundRemovedImageUrl: storedImageUrl,
+    refreshCount,
+    decrementRefreshCount
+  } = useImageStore();
   const [isMicActive, setIsMicActive] = useState(false);
   const [isKeyboardActive, setIsKeyboardActive] = useState(false);
   const [isCountingDown, setIsCountingDown] = useState(false);
@@ -20,6 +32,7 @@ function CompletePageContent() {
   const [skill2Value, setSkill2Value] = useState(0);
   const [character, setCharacter] = useState<Character | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isRegenerating, setIsRegenerating] = useState(false);
   const [qrCodeUrl, setQrCodeUrl] = useState(""); // QR 코드에 표시될 URL
   const [uploadUrl, setUploadUrl] = useState(""); // presigned 업로드 URL
   const [uploadToken, setUploadToken] = useState(""); // 업로드 토큰
@@ -33,6 +46,7 @@ function CompletePageContent() {
   const { playSound } = useButtonSound();
   const searchParams = useSearchParams();
   const characterId = searchParams.get("character");
+  const situationParam = searchParams.get("situation");
   const imageParam = searchParams.get("image");
   const resultImageParam = searchParams.get("resultImage");
   const backgroundImageParam = searchParams.get("backgroundImage");
@@ -500,6 +514,141 @@ function CompletePageContent() {
     }, 300);
   };
 
+  const handleRegenerate = async () => {
+    playSound();
+
+    console.log('=== Regenerate 시작 ===');
+    console.log('storedCharacterId:', storedCharacterId);
+    console.log('storedImageUrl:', storedImageUrl);
+    console.log('storedSituation:', storedSituation);
+    console.log('refreshCount:', refreshCount);
+
+    if (!storedCharacterId || !storedImageUrl) {
+      console.log('저장된 정보 없음');
+      toast({
+        title: "재생성 불가",
+        description: "저장된 이미지 정보가 없습니다.",
+      });
+      return;
+    }
+
+    if (refreshCount <= 0) {
+      console.log('재생성 횟수 초과');
+      toast({
+        title: "재생성 불가",
+        description: "재생성 횟수를 모두 사용했습니다.",
+      });
+      return;
+    }
+
+    setIsRegenerating(true);
+    console.log('재생성 상태 설정 완료');
+
+    try {
+      // 1. image 테이블에 job_id 저장
+      console.log('1. saveImageRecord 호출');
+      const saveResult = await saveImageRecord(storedImageUrl);
+      console.log('saveResult:', saveResult);
+
+      if (!saveResult.success || !saveResult.jobId) {
+        console.log('이미지 저장 실패');
+        toast({
+          title: "이미지 저장 실패",
+          description: saveResult.error || "이미지 저장에 실패했습니다.",
+        });
+        setIsRegenerating(false);
+        return;
+      }
+
+      // 2. AWS API에 이미지 처리 요청
+      console.log('2. requestImageProcessing 호출');
+      const awsResult = await requestImageProcessing(
+        storedImageUrl,
+        storedCharacterId,
+        storedSituation || "재생성",
+        saveResult.jobId
+      );
+      console.log('awsResult:', awsResult);
+
+      if (!awsResult.success) {
+        console.log('AWS API 요청 실패');
+        toast({
+          title: "이미지 처리 요청 실패",
+          description: awsResult.error || "이미지 처리 요청에 실패했습니다.",
+        });
+        setIsRegenerating(false);
+        return;
+      }
+
+      // 3. 결과 대기
+      console.log('3. pollForImageResult 시작');
+      const pollingResult = await pollForImageResult(
+        saveResult.jobId,
+        {
+          maxAttempts: 60,
+          intervalMs: 5000,
+        }
+      );
+      console.log('pollingResult:', pollingResult);
+
+      if (pollingResult.success && pollingResult.data?.result) {
+        const resultData = pollingResult.data.result;
+        console.log('4. 결과 데이터:', resultData);
+
+        let backgroundImageUrl = '';
+
+        if (resultData.background_removed_image_url) {
+          backgroundImageUrl = resultData.background_removed_image_url;
+        } else if (resultData.result_image_url) {
+          backgroundImageUrl = resultData.result_image_url;
+        }
+
+        console.log('backgroundImageUrl:', backgroundImageUrl);
+
+        if (backgroundImageUrl) {
+          console.log('5. 새로운 이미지 설정');
+          // 새로운 이미지로 페이지 리로드
+          setBackgroundRemovedImageUrl(backgroundImageUrl);
+          // QR 코드도 새로 생성해야 하므로 초기화
+          setIsImageUploadComplete(false);
+          // presigned URL 새로 생성
+          console.log('6. presigned URL 생성 시작');
+          await generatePresignedUrlAndCapture();
+
+          // 재생성 성공 시 카운트 감소
+          decrementRefreshCount();
+          console.log('재생성 카운트 감소됨:', refreshCount - 1);
+
+          toast({
+            title: "재생성 완료",
+            description: "새로운 이미지가 생성되었습니다.",
+          });
+        } else {
+          console.log('이미지 URL 없음');
+          toast({
+            title: "이미지 URL을 찾을 수 없습니다",
+            description: "생성된 이미지 URL을 찾을 수 없습니다.",
+          });
+        }
+      } else {
+        console.log('polling 실패:', pollingResult);
+        toast({
+          title: "이미지 생성 실패",
+          description: "이미지 생성에 실패했습니다.",
+        });
+      }
+    } catch (error) {
+      console.error('재생성 에러:', error);
+      toast({
+        title: "오류 발생",
+        description: error instanceof Error ? error.message : "알 수 없는 오류가 발생했습니다.",
+      });
+    } finally {
+      console.log('재생성 완료');
+      setIsRegenerating(false);
+    }
+  };
+
   // 모든 프로세스가 완료되었는지 확인
   const isAllProcessComplete = isImageUploadComplete;
 
@@ -907,15 +1056,26 @@ function CompletePageContent() {
         </div>
       </div>
 
-      <div
-        ref={photoCardRef}
-        className="photo-card absolute top-[582px] w-[1594px] h-[2543px] border-[10px] border-black z-20 rounded-[50px] flex flex-col items-center justify-start bg-[#F9D5AA] pt-8"
-        style={{ backgroundColor: "#F9D5AA" }}
-      >
+      {isRegenerating ? (
+        // 재생성 중일 때 Lottie 애니메이션만 표시
+        <div className="absolute top-[582px] w-[1594px] h-[2543px] z-20 flex items-center justify-center">
+          <Lottie
+            animationData={loaderAnimation}
+            loop={true}
+            style={{ width: 800, height: 800 }}
+          />
+        </div>
+      ) : (
+        // 일반 포토카드 표시
         <div
-          className="text-[170px] font-bold text-center text-[#481F0E] role-text relative"
-          style={{ fontFamily: "MuseumClassic, serif" }}
+          ref={photoCardRef}
+          className="photo-card absolute top-[582px] w-[1594px] h-[2543px] border-[10px] border-black z-20 rounded-[50px] flex flex-col items-center justify-start bg-[#F9D5AA] pt-8"
+          style={{ backgroundColor: "#F9D5AA" }}
         >
+          <div
+            className="text-[170px] font-bold text-center text-[#481F0E] role-text relative"
+            style={{ fontFamily: "MuseumClassic, serif" }}
+          >
           {/* title_deco.png 이미지를 글자 중간에 배치 */}
           <img
             src="/title_img.png"
@@ -1116,9 +1276,10 @@ function CompletePageContent() {
             </div>
           </div>
         </div>
-      </div>
+        </div>
+      )}
 
-      <div className="button-container flex items-center justify-center z-30 flex-row mb-[358px] gap-x-24">
+      <div className="button-container flex items-center justify-center z-30 flex-row mb-[358px]">
         {!isImageUploadComplete ? (
           <div className="flex flex-col items-center gap-4">
             <div className="text-[128px] text-[#451F0D] font-bold">
@@ -1132,25 +1293,42 @@ function CompletePageContent() {
             </div>
           </div>
         ) : (
-          <>
-            <div>
-              <Button
-                onClick={handleTransform}
-                className="w-[752px] h-[281px] text-[128px] text-[#451F0D] bg-[#E4BE50] rounded-[60px] font-bold z-20"
-              >
-                출력하기
-              </Button>
-            </div>
-
-            <div>
+          <div className="w-[1594px] flex flex-row items-center justify-between gap-x-12">
+            <div className="w-[684px]">
               <Button
                 onClick={handleGoHome}
-                className="w-[752px] h-[281px] text-[128px] text-[#451F0D] bg-[#E4BE50]  rounded-[60px] font-bold z-20"
+                disabled={isRegenerating}
+                className="w-full h-[281px] text-[128px] text-[#451F0D] bg-[#E4BE50] rounded-[60px] font-bold z-20"
               >
                 처음으로
               </Button>
             </div>
-          </>
+
+            <div className="w-[228px] flex flex-col items-center justify-center gap-4">
+              <Button
+                onClick={() => {
+                  console.log('Refresh 버튼 클릭됨!');
+                  handleRegenerate();
+                }}
+                disabled={isRegenerating || refreshCount <= 0}
+                className="w-[228px] h-[228px] text-[128px] text-[#451F0D] bg-[#E4BE50] rounded-full font-bold z-20 flex items-center justify-center p-0 overflow-visible disabled:opacity-50 disabled:cursor-not-allowed"
+                title="다시 생성"
+              >
+                <IoMdRefresh style={{ width: '180px', height: '180px' }} />
+              </Button>
+              
+            </div>
+
+            <div className="w-[684px]">
+              <Button
+                onClick={handleTransform}
+                disabled={isRegenerating}
+                className="w-full h-[281px] text-[128px] text-[#451F0D] bg-[#E4BE50] rounded-[60px] font-bold z-20"
+              >
+                출력하기
+              </Button>
+            </div>
+          </div>
         )}
 
         {/* 이미지 다운로드 버튼 - 완료된 경우에만 표시 */}
