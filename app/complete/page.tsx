@@ -1173,7 +1173,7 @@ function CompletePageContent() {
                 backgroundRemovedImageUrl || character?.picture_character || ""
               }
               alt={character?.role || "character"}
-              className="object-cover w-[1348px] h-[2050px]"
+              className="object-cover w-[1348px] h-[2050px] rounded-[120px]"
             />
           </div>
 

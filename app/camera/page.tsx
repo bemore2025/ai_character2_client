@@ -154,7 +154,7 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
       if (pollingResult.success && pollingResult.data?.result) {
         // 3. API 응답 데이터에서 background_removed_image_url 추출
         const resultData = pollingResult.data.result;
-        
+
         console.log('[Camera] Processing result data:', {
           resultDataType: typeof resultData,
           resultData: resultData
@@ -163,16 +163,19 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
         try {
           // background_removed_image_url 추출
           let backgroundImageUrl = '';
-          
-          if (resultData.background_removed_image_url) {
+
+          // result가 문자열(URL)인 경우 직접 사용
+          if (typeof resultData === 'string') {
+            backgroundImageUrl = resultData;
+          } else if (resultData.background_removed_image_url) {
             backgroundImageUrl = resultData.background_removed_image_url;
           } else if (resultData.result_image_url) {
             // 대안으로 result_image_url 사용
             backgroundImageUrl = resultData.result_image_url;
           }
-          
+
           console.log('[Camera] Extracted background_removed_image_url:', backgroundImageUrl);
-          
+
           if (backgroundImageUrl) {
             console.log('[Camera] Navigating to complete page with background image URL...');
             // Zustand store에 이미지 정보 저장

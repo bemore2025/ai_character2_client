@@ -120,7 +120,7 @@ export async function requestImageProcessing(
   error?: string;
 }> {
   try {
-    const response = await fetch('https://7rdwvw8vpg.execute-api.ap-northeast-2.amazonaws.com/cartoonize', {
+    const response = await fetch('https://9wdz4rve0l.execute-api.ap-northeast-2.amazonaws.com/api/v1/cartoonize', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
