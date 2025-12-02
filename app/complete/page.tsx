@@ -284,7 +284,7 @@ function CompletePageContent() {
       addDebugInfo("Canvas 변환 시작");
       // dom-to-image를 사용해서 이미지 생성
       const dataUrl = await domtoimage.toPng(targetElement, {
-        bgcolor: "#F9D5AA",
+        bgcolor: "#B9D8F0",
         width: 1594,
         height: 2543,
         quality: 1.0,
@@ -699,7 +699,7 @@ function CompletePageContent() {
 
       // dom-to-image를 사용해서 보이는 그대로 이미지 생성
       const dataUrl = await domtoimage.toPng(targetElement, {
-        bgcolor: "#F9D5AA",
+        bgcolor: "#B9D8F0",
         width: 1594,
         height: 2543,
         quality: 1.0,
@@ -1069,8 +1069,8 @@ function CompletePageContent() {
         // 일반 포토카드 표시
         <div
           ref={photoCardRef}
-          className="photo-card absolute top-[582px] w-[1594px] h-[2543px] border-[10px] border-black z-20 rounded-[50px] flex flex-col items-center justify-start bg-[#F9D5AA] pt-8"
-          style={{ backgroundColor: "#F9D5AA" }}
+          className="photo-card absolute top-[582px] w-[1594px] h-[2543px] border-[10px] border-black z-20 rounded-[50px] flex flex-col items-center justify-start bg-[#B9D8F0] pt-8"
+          style={{ backgroundColor: "#B9D8F0" }}
         >
           <div
             className="text-[170px] font-bold text-center text-[#481F0E] role-text relative"
@@ -1142,8 +1142,8 @@ function CompletePageContent() {
           )}
 
           <div
-            className="qrcode absolute bottom-0 right-0 w-[460px] h-[460px] bg-[#F9D5AA] z-30 border-[21px] border-black rounded-tl-[50px] rounded-br-[50px] flex items-center justify-center "
-            style={{ backgroundColor: "#F9D5AA" }}
+            className="qrcode absolute bottom-0 right-0 w-[460px] h-[460px] bg-[#B9D8F0] z-30 border-[21px] border-black rounded-tl-[50px] rounded-br-[50px] flex items-center justify-center "
+            style={{ backgroundColor: "#B9D8F0" }}
           >
             {qrCodeUrl ? (
               <QRCodeComponent
@@ -1162,7 +1162,7 @@ function CompletePageContent() {
           <div
             className="absolute inset-0 border-[21px] border-black thick-container rounded-[60px] top-[]"
             style={{
-              backgroundImage: `url("/card_bg.png")`,
+              backgroundImage: `url("/card_bg2.png")`,
               backgroundSize: "cover",
               backgroundPosition: "center",
               backgroundRepeat: "no-repeat",
@@ -1173,7 +1173,7 @@ function CompletePageContent() {
                 backgroundRemovedImageUrl || character?.picture_character || ""
               }
               alt={character?.role || "character"}
-              className="object-cover w-[1348px] h-[2050px] rounded-[120px]"
+              className="object-cover w-[1348px] h-[2050px] rounded-[40px]"
             />
           </div>
 
