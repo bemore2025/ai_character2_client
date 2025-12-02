@@ -1,16 +1,12 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { updateSession } from "./utils/supabase/middleware";
 
 export async function middleware(request: NextRequest) {
   try {
     const { pathname } = request.nextUrl;
 
-    // Supabase 세션 업데이트
-    const response = await updateSession(request);
-
     // 루트 경로는 인증 체크 제외
     if (pathname === "/") {
-      return response;
+      return NextResponse.next();
     }
 
     // 인증 쿠키 확인
@@ -18,11 +14,10 @@ export async function middleware(request: NextRequest) {
 
     // 인증되지 않은 경우 루트로 리다이렉트
     if (!isAuthenticated) {
-      const redirectUrl = new URL("/", request.url);
-      return NextResponse.redirect(redirectUrl);
+      return NextResponse.redirect(new URL("/", request.url));
     }
 
-    return response;
+    return NextResponse.next();
   } catch (error) {
     // 에러 발생 시 기본 응답 반환
     return NextResponse.next();
