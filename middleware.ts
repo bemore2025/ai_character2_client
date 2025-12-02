@@ -1,15 +1,11 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { updateSession } from "./utils/supabase/middleware";
 
-export async function middleware(request: NextRequest) {
+export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-
-  // Supabase 세션 업데이트
-  const response = await updateSession(request);
 
   // 루트 경로는 인증 체크 제외
   if (pathname === "/") {
-    return response;
+    return NextResponse.next();
   }
 
   // 인증 쿠키 확인
@@ -20,7 +16,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/", request.url));
   }
 
-  return response;
+  return NextResponse.next();
 }
 
 export const config = {
