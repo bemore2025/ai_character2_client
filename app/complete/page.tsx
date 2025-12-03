@@ -621,13 +621,27 @@ function CompletePageContent() {
       if (pollingResult.success && pollingResult.data?.result) {
         const resultData = pollingResult.data.result;
         console.log("4. 결과 데이터:", resultData);
+        console.log("4-1. 결과 데이터 타입:", typeof resultData);
 
         let backgroundImageUrl = "";
 
-        if (resultData.background_removed_image_url) {
-          backgroundImageUrl = resultData.background_removed_image_url;
-        } else if (resultData.result_image_url) {
-          backgroundImageUrl = resultData.result_image_url;
+        // result가 문자열(URL)인 경우 직접 사용
+        if (typeof resultData === "string") {
+          backgroundImageUrl = resultData;
+          console.log("4-2. result가 문자열(URL):", backgroundImageUrl);
+        }
+        // result가 객체인 경우 속성에서 추출
+        else if (typeof resultData === "object" && resultData !== null) {
+          if (resultData.background_removed_image_url) {
+            backgroundImageUrl = resultData.background_removed_image_url;
+            console.log(
+              "4-3. background_removed_image_url 사용:",
+              backgroundImageUrl
+            );
+          } else if (resultData.result_image_url) {
+            backgroundImageUrl = resultData.result_image_url;
+            console.log("4-4. result_image_url 사용:", backgroundImageUrl);
+          }
         }
 
         console.log("backgroundImageUrl:", backgroundImageUrl);
@@ -1218,7 +1232,7 @@ function CompletePageContent() {
                   ""
                 }
                 alt={character?.role || "character"}
-                className="object-cover w-[1348px] h-[2050px] rounded-[40px]"
+                className="cartoon-image object-cover w-[1348px] h-[2050px] rounded-[40px]"
               />
             </div>
 
