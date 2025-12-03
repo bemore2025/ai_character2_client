@@ -56,6 +56,7 @@ export async function GET(request: NextRequest) {
     const supabase = await createClient();
     const { searchParams } = request.nextUrl;
     const job_id = searchParams.get('job_id');
+    const regeneration_count = searchParams.get('regeneration_count') || '2'; // 기본값 2 (초기 생성)
 
     if (!job_id) {
       return NextResponse.json(
@@ -78,10 +79,39 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // regeneration_count에 따라 적절한 result 컬럼 선택
+    let targetResult = null;
+    let hasResult = false;
+
+    const count = parseInt(regeneration_count);
+
+    if (count === 2) {
+      // 초기 생성 (아직 재생성 안 함)
+      targetResult = data.result;
+      hasResult = !!data.result;
+    } else if (count === 1) {
+      // 첫 번째 재생성
+      targetResult = data.result_add1;
+      hasResult = !!data.result_add1;
+    } else if (count === 0) {
+      // 두 번째 재생성
+      targetResult = data.result_add2;
+      hasResult = !!data.result_add2;
+    }
+
+    // 타임스탬프를 추가하여 캐싱 방지
+    const responseData = {
+      ...data,
+      result: targetResult,
+      _timestamp: Date.now() // 캐시 버스팅용
+    };
+
     return NextResponse.json({
       success: true,
-      data: data,
-      has_result: !!data.result
+      data: responseData,
+      has_result: hasResult,
+      regeneration_count: count,
+      target_column: count === 2 ? 'result' : count === 1 ? 'result_add1' : 'result_add2'
     });
 
   } catch (error) {

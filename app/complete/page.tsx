@@ -10,7 +10,11 @@ import { toast } from "@/components/ui/use-toast";
 import { MessageResponse, Character, CharacterResponse } from "./types";
 import { IoMdRefresh } from "react-icons/io";
 import { useImageStore } from "@/app/store/useImageStore";
-import { saveImageRecord, pollForImageResult, requestImageProcessing } from "@/utils/imagePolling";
+import {
+  saveImageRecord,
+  pollForImageResult,
+  requestImageProcessing,
+} from "@/utils/imagePolling";
 import Lottie from "lottie-react";
 import loaderAnimation from "@/public/loader.json";
 
@@ -20,8 +24,6 @@ function CompletePageContent() {
     characterId: storedCharacterId,
     situation: storedSituation,
     backgroundRemovedImageUrl: storedImageUrl,
-    refreshCount,
-    decrementRefreshCount
   } = useImageStore();
   const [isMicActive, setIsMicActive] = useState(false);
   const [isKeyboardActive, setIsKeyboardActive] = useState(false);
@@ -43,6 +45,7 @@ function CompletePageContent() {
   const [debugInfo, setDebugInfo] = useState<string[]>([]); // 디버깅 정보
   const [isPrinting, setIsPrinting] = useState(false); // 출력 상태 추가
   const [randomMessage, setRandomMessage] = useState<string>(""); // 랜덤 메시지 상태
+  const [localRefreshCount, setLocalRefreshCount] = useState<number>(2); // localStorage 기반 재생성 카운트
   const { playSound } = useButtonSound();
   const searchParams = useSearchParams();
   const characterId = searchParams.get("character");
@@ -106,6 +109,22 @@ function CompletePageContent() {
       setSkill2Value(Math.floor(Math.random() * 201 + 100));
     }
   };
+
+  // /complete 페이지 진입 시 localStorage에 재생성 카운트를 2로 초기화
+  useEffect(() => {
+    console.log("=== Complete 페이지 진입 - 재생성 카운트 초기화 ===");
+    localStorage.setItem("regenerateCount", "2");
+    setLocalRefreshCount(2);
+    console.log("재생성 카운트 초기화 완료: 2회");
+  }, []);
+
+  // localStorage에서 재생성 카운트 읽어오기 (다른 useEffect에서 수정될 수 있으므로)
+  useEffect(() => {
+    const savedCount = localStorage.getItem("regenerateCount");
+    if (savedCount !== null) {
+      setLocalRefreshCount(parseInt(savedCount));
+    }
+  }, [isRegenerating]);
 
   // 출력 상태를 localStorage에서 확인하고 복원
   useEffect(() => {
@@ -517,14 +536,14 @@ function CompletePageContent() {
   const handleRegenerate = async () => {
     playSound();
 
-    console.log('=== Regenerate 시작 ===');
-    console.log('storedCharacterId:', storedCharacterId);
-    console.log('storedImageUrl:', storedImageUrl);
-    console.log('storedSituation:', storedSituation);
-    console.log('refreshCount:', refreshCount);
+    console.log("=== Regenerate 시작 ===");
+    console.log("storedCharacterId:", storedCharacterId);
+    console.log("storedImageUrl:", storedImageUrl);
+    console.log("storedSituation:", storedSituation);
+    console.log("localRefreshCount:", localRefreshCount);
 
     if (!storedCharacterId || !storedImageUrl) {
-      console.log('저장된 정보 없음');
+      console.log("저장된 정보 없음");
       toast({
         title: "재생성 불가",
         description: "저장된 이미지 정보가 없습니다.",
@@ -532,8 +551,12 @@ function CompletePageContent() {
       return;
     }
 
-    if (refreshCount <= 0) {
-      console.log('재생성 횟수 초과');
+    // localStorage 기반 카운트 체크
+    const currentCount = parseInt(
+      localStorage.getItem("regenerateCount") || "0"
+    );
+    if (currentCount <= 0) {
+      console.log("재생성 횟수 초과");
       toast({
         title: "재생성 불가",
         description: "재생성 횟수를 모두 사용했습니다.",
@@ -542,16 +565,16 @@ function CompletePageContent() {
     }
 
     setIsRegenerating(true);
-    console.log('재생성 상태 설정 완료');
+    console.log("재생성 상태 설정 완료");
 
     try {
       // 1. image 테이블에 job_id 저장
-      console.log('1. saveImageRecord 호출');
+      console.log("1. saveImageRecord 호출");
       const saveResult = await saveImageRecord(storedImageUrl);
-      console.log('saveResult:', saveResult);
+      console.log("saveResult:", saveResult);
 
       if (!saveResult.success || !saveResult.jobId) {
-        console.log('이미지 저장 실패');
+        console.log("이미지 저장 실패");
         toast({
           title: "이미지 저장 실패",
           description: saveResult.error || "이미지 저장에 실패했습니다.",
@@ -560,18 +583,25 @@ function CompletePageContent() {
         return;
       }
 
-      // 2. AWS API에 이미지 처리 요청
-      console.log('2. requestImageProcessing 호출');
+      // 2. AWS API에 이미지 처리 요청 - regenerationCount 전달
+      const currentRegenerationCount = parseInt(
+        localStorage.getItem("regenerateCount") || "2"
+      );
+      console.log(
+        "2. requestImageProcessing 호출 - regenerationCount:",
+        currentRegenerationCount
+      );
       const awsResult = await requestImageProcessing(
         storedImageUrl,
         storedCharacterId,
         storedSituation || "재생성",
-        saveResult.jobId
+        saveResult.jobId,
+        currentRegenerationCount
       );
-      console.log('awsResult:', awsResult);
+      console.log("awsResult:", awsResult);
 
       if (!awsResult.success) {
-        console.log('AWS API 요청 실패');
+        console.log("AWS API 요청 실패");
         toast({
           title: "이미지 처리 요청 실패",
           description: awsResult.error || "이미지 처리 요청에 실패했습니다.",
@@ -580,22 +610,24 @@ function CompletePageContent() {
         return;
       }
 
-      // 3. 결과 대기
-      console.log('3. pollForImageResult 시작');
-      const pollingResult = await pollForImageResult(
-        saveResult.jobId,
-        {
-          maxAttempts: 60,
-          intervalMs: 5000,
-        }
+      // 3. 결과 대기 - 현재 localStorage의 카운트를 전달
+      console.log(
+        "3. pollForImageResult 시작 - regenerationCount:",
+        currentRegenerationCount
       );
-      console.log('pollingResult:', pollingResult);
+
+      const pollingResult = await pollForImageResult(saveResult.jobId, {
+        maxAttempts: 60,
+        intervalMs: 5000,
+        regenerationCount: currentRegenerationCount, // 재생성 횟수 전달
+      });
+      console.log("pollingResult:", pollingResult);
 
       if (pollingResult.success && pollingResult.data?.result) {
         const resultData = pollingResult.data.result;
-        console.log('4. 결과 데이터:', resultData);
+        console.log("4. 결과 데이터:", resultData);
 
-        let backgroundImageUrl = '';
+        let backgroundImageUrl = "";
 
         if (resultData.background_removed_image_url) {
           backgroundImageUrl = resultData.background_removed_image_url;
@@ -603,48 +635,56 @@ function CompletePageContent() {
           backgroundImageUrl = resultData.result_image_url;
         }
 
-        console.log('backgroundImageUrl:', backgroundImageUrl);
+        console.log("backgroundImageUrl:", backgroundImageUrl);
 
         if (backgroundImageUrl) {
-          console.log('5. 새로운 이미지 설정');
+          console.log("5. 새로운 이미지 설정");
           // 새로운 이미지로 페이지 리로드
           setBackgroundRemovedImageUrl(backgroundImageUrl);
           // QR 코드도 새로 생성해야 하므로 초기화
           setIsImageUploadComplete(false);
           // presigned URL 새로 생성
-          console.log('6. presigned URL 생성 시작');
+          console.log("6. presigned URL 생성 시작");
           await generatePresignedUrlAndCapture();
 
-          // 재생성 성공 시 카운트 감소
-          decrementRefreshCount();
-          console.log('재생성 카운트 감소됨:', refreshCount - 1);
+          // 재생성 성공 시 localStorage 카운트 감소
+          const currentCount = parseInt(
+            localStorage.getItem("regenerateCount") || "0"
+          );
+          const newCount = Math.max(0, currentCount - 1);
+          localStorage.setItem("regenerateCount", newCount.toString());
+          setLocalRefreshCount(newCount);
+          console.log("재생성 카운트 감소됨:", newCount);
 
           toast({
             title: "재생성 완료",
             description: "새로운 이미지가 생성되었습니다.",
           });
         } else {
-          console.log('이미지 URL 없음');
+          console.log("이미지 URL 없음");
           toast({
             title: "이미지 URL을 찾을 수 없습니다",
             description: "생성된 이미지 URL을 찾을 수 없습니다.",
           });
         }
       } else {
-        console.log('polling 실패:', pollingResult);
+        console.log("polling 실패:", pollingResult);
         toast({
           title: "이미지 생성 실패",
           description: "이미지 생성에 실패했습니다.",
         });
       }
     } catch (error) {
-      console.error('재생성 에러:', error);
+      console.error("재생성 에러:", error);
       toast({
         title: "오류 발생",
-        description: error instanceof Error ? error.message : "알 수 없는 오류가 발생했습니다.",
+        description:
+          error instanceof Error
+            ? error.message
+            : "알 수 없는 오류가 발생했습니다.",
       });
     } finally {
-      console.log('재생성 완료');
+      console.log("재생성 완료");
       setIsRegenerating(false);
     }
   };
@@ -1076,206 +1116,208 @@ function CompletePageContent() {
             className="text-[170px] font-bold text-center text-[#481F0E] role-text relative"
             style={{ fontFamily: "MuseumClassic, serif" }}
           >
-          {/* title_deco.png 이미지를 글자 중간에 배치 */}
-          <img
-            src="/title_img.png"
-            alt="title decoration"
-            className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-0 flex-shrink-0"
-            style={{
-              width: "1226px",
-              height: "149px",
-              minWidth: "1226px",
-              minHeight: "149px",
-              maxWidth: "1226px",
-              maxHeight: "149px",
-              border: "none",
-              outline: "none",
-              boxShadow: "none",
-              backgroundColor: "transparent",
-            }}
-          />
-          <span
-            className="relative z-10 text-black role-name"
-            style={{
-              fontFamily: "Galmuri7",
-              fontSize: "189px",
-              letterSpacing: "-5%",
-              border: "none",
-              outline: "none",
-              boxShadow: "none",
-              backgroundColor: "transparent",
-            }}
-          >
-            {formatRoleText(character?.role || "")}
-          </span>
-        </div>
-
-        <div className="w-[1368px] h-[2070px] z-20 rounded-[50px] mb-[100px] relative overflow-hidden flex flex-col items-center justify-end">
-          {/* 별 표시 영역 - QR 코드 위쪽에 세로로 배치 */}
-          {character?.star_count && character.star_count > 0 && (
-            <div
-              className="absolute bottom-[480px] right-[50px] z-30 flex flex-col items-center gap-2"
+            {/* title_deco.png 이미지를 글자 중간에 배치 */}
+            <img
+              src="/title_img.png"
+              alt="title decoration"
+              className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-0 flex-shrink-0"
               style={{
+                width: "1226px",
+                height: "149px",
+                minWidth: "1226px",
+                minHeight: "149px",
+                maxWidth: "1226px",
+                maxHeight: "149px",
+                border: "none",
+                outline: "none",
+                boxShadow: "none",
+                backgroundColor: "transparent",
+              }}
+            />
+            <span
+              className="relative z-10 text-black role-name"
+              style={{
+                fontFamily: "Galmuri7",
+                fontSize: "189px",
+                letterSpacing: "-5%",
                 border: "none",
                 outline: "none",
                 boxShadow: "none",
                 backgroundColor: "transparent",
               }}
             >
-              {Array.from({ length: character.star_count }, (_, index) => (
-                <div
-                  key={index}
-                  className="w-[136px] h-[136px] relative"
-                  style={{
-                    backgroundImage: "url(/star.png)",
-                    backgroundSize: "contain",
-                    backgroundRepeat: "no-repeat",
-                    backgroundPosition: "center",
-                    backgroundColor: "transparent",
-                    border: "none",
-                    outline: "none",
-                    boxShadow: "none",
-                  }}
-                />
-              ))}
-            </div>
-          )}
-
-          <div
-            className="qrcode absolute bottom-0 right-0 w-[460px] h-[460px] bg-[#B9D8F0] z-30 border-[21px] border-black rounded-tl-[50px] rounded-br-[50px] flex items-center justify-center "
-            style={{ backgroundColor: "#B9D8F0" }}
-          >
-            {qrCodeUrl ? (
-              <QRCodeComponent
-                value={qrCodeUrl}
-                size={380}
-                className="rounded-lg border-none"
-                onReady={handleQrReady}
-              />
-            ) : (
-              <div className="w-[380px] h-[380px] bg-white flex items-center justify-center">
-                <div className="text-[24px] text-gray-400">QR 준비중</div>
-              </div>
-            )}
+              {formatRoleText(character?.role || "")}
+            </span>
           </div>
 
-          <div
-            className="absolute inset-0 border-[21px] border-black thick-container rounded-[60px] top-[]"
-            style={{
-              backgroundImage: `url("/card_bg2.png")`,
-              backgroundSize: "cover",
-              backgroundPosition: "center",
-              backgroundRepeat: "no-repeat",
-            }}
-          >
-            <img
-              src={
-                backgroundRemovedImageUrl || character?.picture_character || ""
-              }
-              alt={character?.role || "character"}
-              className="object-cover w-[1348px] h-[2050px] rounded-[40px]"
-            />
-          </div>
-
-          <div className="relative w-full h-[290px]">
-            {/* 검정색 윗 테두리를 가진 겹친 div */}
-            <div className="absolute top-0 left-0 w-full h-[290px] border-[21px] border-black z-25 rounded-bl-[50px] rounded-br-[50px] ability-frame" />
-
-            <div className="w-full h-[290px] z-20 bg-[#E4BE50] flex flex-row border-none relative">
-              {/* 네임택 위 텍스트 */}
+          <div className="w-[1368px] h-[2070px] z-20 rounded-[50px] mb-[100px] relative overflow-hidden flex flex-col items-center justify-end">
+            {/* 별 표시 영역 - QR 코드 위쪽에 세로로 배치 */}
+            {character?.star_count && character.star_count > 0 && (
               <div
-                className="absolute w-[814px] h-[298px] z-30 flex flex-col items-center justify-center bg-[#F7D5AA] rounded-[130px] border-[21px] border-black"
+                className="absolute bottom-[480px] right-[50px] z-30 flex flex-col items-center gap-2"
                 style={{
-                  top: "-350px",
-                  left: "32.5%",
-                  transform: "translateX(-50%)",
-                  fontFamily: "MuseumClassic, serif",
+                  border: "none",
+                  outline: "none",
+                  boxShadow: "none",
+                  backgroundColor: "transparent",
                 }}
               >
+                {Array.from({ length: character.star_count }, (_, index) => (
+                  <div
+                    key={index}
+                    className="w-[136px] h-[136px] relative"
+                    style={{
+                      backgroundImage: "url(/star.png)",
+                      backgroundSize: "contain",
+                      backgroundRepeat: "no-repeat",
+                      backgroundPosition: "center",
+                      backgroundColor: "transparent",
+                      border: "none",
+                      outline: "none",
+                      boxShadow: "none",
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+
+            <div
+              className="qrcode absolute bottom-0 right-0 w-[460px] h-[460px] bg-[#B9D8F0] z-30 border-[21px] border-black rounded-tl-[50px] rounded-br-[50px] flex items-center justify-center "
+              style={{ backgroundColor: "#B9D8F0" }}
+            >
+              {qrCodeUrl ? (
+                <QRCodeComponent
+                  value={qrCodeUrl}
+                  size={380}
+                  className="rounded-lg border-none"
+                  onReady={handleQrReady}
+                />
+              ) : (
+                <div className="w-[380px] h-[380px] bg-white flex items-center justify-center">
+                  <div className="text-[24px] text-gray-400">QR 준비중</div>
+                </div>
+              )}
+            </div>
+
+            <div
+              className="absolute inset-0 border-[21px] border-black thick-container rounded-[60px] top-[]"
+              style={{
+                backgroundImage: `url("/card_bg2.png")`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+                backgroundRepeat: "no-repeat",
+              }}
+            >
+              <img
+                src={
+                  backgroundRemovedImageUrl ||
+                  character?.picture_character ||
+                  ""
+                }
+                alt={character?.role || "character"}
+                className="object-cover w-[1348px] h-[2050px] rounded-[40px]"
+              />
+            </div>
+
+            <div className="relative w-full h-[290px]">
+              {/* 검정색 윗 테두리를 가진 겹친 div */}
+              <div className="absolute top-0 left-0 w-full h-[290px] border-[21px] border-black z-25 rounded-bl-[50px] rounded-br-[50px] ability-frame" />
+
+              <div className="w-full h-[290px] z-20 bg-[#E4BE50] flex flex-row border-none relative">
+                {/* 네임택 위 텍스트 */}
                 <div
-                  className="text-[95px] text-[#000000] leading-tight text-center px-10 whitespace-pre-line"
+                  className="absolute w-[814px] h-[298px] z-30 flex flex-col items-center justify-center bg-[#B9D8F0] rounded-[130px] border-[21px] border-black"
                   style={{
-                    fontFamily: "DNFBitBitv2, monospace",
-                    whiteSpace: "pre-wrap",
+                    top: "-350px",
+                    left: "32.5%",
+                    transform: "translateX(-50%)",
+                    fontFamily: "MuseumClassic, serif",
                   }}
-                  dangerouslySetInnerHTML={{
-                    __html: randomMessage
-                      .replace(/\/n/g, "\n") // "/n"을 "\n"으로 변환
-                      .split("\n")
-                      .join("<br />"),
-                  }}
-                ></div>
+                >
+                  <div
+                    className="text-[95px] text-[#000000] leading-tight text-center px-10 whitespace-pre-line"
+                    style={{
+                      fontFamily: "DNFBitBitv2, monospace",
+                      whiteSpace: "pre-wrap",
+                    }}
+                    dangerouslySetInnerHTML={{
+                      __html: randomMessage
+                        .replace(/\/n/g, "\n") // "/n"을 "\n"으로 변환
+                        .split("\n")
+                        .join("<br />"),
+                    }}
+                  ></div>
+                </div>
+
+                {/* 통합된 ability 영역 */}
+                <div className="flex-1 flex flex-row border-none relative h-[287.5px]">
+                  {/* 왼쪽 ability1 영역 */}
+                  <div className="flex-1 flex flex-col border-none">
+                    {/* 상단 - ability1 */}
+                    <div
+                      className="flex-1 bg-[#0068B7] flex flex-col items-center justify-center border-none"
+                      style={{ fontFamily: "DNFBitBitv2, monospace" }}
+                    >
+                      <p
+                        style={{ fontFamily: "DNFBitBitv2, monospace" }}
+                        className="text-[69px] text-white leading-[150%] border-none"
+                      >
+                        {character?.ability1 || "지도력"}
+                      </p>
+                    </div>
+
+                    {/* 하단 - skill1Value */}
+                    <div
+                      className="flex-1 bg-[#BAE3F9] flex flex-col items-center justify-center border-none"
+                      style={{ fontFamily: "DNFBitBitv2, monospace" }}
+                    >
+                      <p
+                        style={{ fontFamily: "DNFBitBitv2, monospace" }}
+                        className="text-[100px] text-black leading-none border-none"
+                      >
+                        {skill1Value}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* 오른쪽 ability2 영역 */}
+                  <div className="flex-1 flex flex-col border-none">
+                    {/* 상단 - ability2 */}
+                    <div
+                      className="flex-1 bg-[#0068B7] flex flex-col items-center justify-center border-none"
+                      style={{ fontFamily: "DNFBitBitv2, monospace" }}
+                    >
+                      <p
+                        style={{ fontFamily: "DNFBitBitv2, monospace" }}
+                        className="text-[69px] text-white leading-[150%] border-none"
+                      >
+                        {character?.ability2 || "결단력"}
+                      </p>
+                    </div>
+
+                    {/* 하단 - skill2Value */}
+                    <div
+                      className="flex-1 bg-[#BAE3F9] flex flex-col items-center justify-center border-none"
+                      style={{ fontFamily: "DNFBitBitv2, monospace" }}
+                    >
+                      <p
+                        style={{ fontFamily: "DNFBitBitv2, monospace" }}
+                        className="text-[100px] text-black leading-none border-none"
+                      >
+                        {skill2Value}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* 중앙 구분선 - absolute 포지셔닝 */}
+                  <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 flex items-center justify-center z-10">
+                    <div className="w-[21px] bg-black h-[220px] rounded-t-full rounded-b-full"></div>
+                  </div>
+                </div>
+                <div className="w-[460px] "></div>
               </div>
-
-              {/* 통합된 ability 영역 */}
-              <div className="flex-1 flex flex-row border-none relative h-[287.5px]">
-                {/* 왼쪽 ability1 영역 */}
-                <div className="flex-1 flex flex-col border-none">
-                  {/* 상단 - ability1 */}
-                  <div
-                    className="flex-1 bg-[#0068B7] flex flex-col items-center justify-center border-none"
-                    style={{ fontFamily: "DNFBitBitv2, monospace" }}
-                  >
-                    <p
-                      style={{ fontFamily: "DNFBitBitv2, monospace" }}
-                      className="text-[69px] text-white leading-[150%] border-none"
-                    >
-                      {character?.ability1 || "지도력"}
-                    </p>
-                  </div>
-
-                  {/* 하단 - skill1Value */}
-                  <div
-                    className="flex-1 bg-[#BAE3F9] flex flex-col items-center justify-center border-none"
-                    style={{ fontFamily: "DNFBitBitv2, monospace" }}
-                  >
-                    <p
-                      style={{ fontFamily: "DNFBitBitv2, monospace" }}
-                      className="text-[100px] text-black leading-none border-none"
-                    >
-                      {skill1Value}
-                    </p>
-                  </div>
-                </div>
-
-                {/* 오른쪽 ability2 영역 */}
-                <div className="flex-1 flex flex-col border-none">
-                  {/* 상단 - ability2 */}
-                  <div
-                    className="flex-1 bg-[#0068B7] flex flex-col items-center justify-center border-none"
-                    style={{ fontFamily: "DNFBitBitv2, monospace" }}
-                  >
-                    <p
-                      style={{ fontFamily: "DNFBitBitv2, monospace" }}
-                      className="text-[69px] text-white leading-[150%] border-none"
-                    >
-                      {character?.ability2 || "결단력"}
-                    </p>
-                  </div>
-
-                  {/* 하단 - skill2Value */}
-                  <div
-                    className="flex-1 bg-[#BAE3F9] flex flex-col items-center justify-center border-none"
-                    style={{ fontFamily: "DNFBitBitv2, monospace" }}
-                  >
-                    <p
-                      style={{ fontFamily: "DNFBitBitv2, monospace" }}
-                      className="text-[100px] text-black leading-none border-none"
-                    >
-                      {skill2Value}
-                    </p>
-                  </div>
-                </div>
-
-                {/* 중앙 구분선 - absolute 포지셔닝 */}
-                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 flex items-center justify-center z-10">
-                  <div className="w-[21px] bg-black h-[220px] rounded-t-full rounded-b-full"></div>
-                </div>
-              </div>
-              <div className="w-[460px] "></div>
             </div>
           </div>
-        </div>
         </div>
       )}
 
@@ -1304,20 +1346,21 @@ function CompletePageContent() {
               </Button>
             </div>
 
-            <div className="w-[228px] flex flex-col items-center justify-center gap-4">
-              <Button
-                onClick={() => {
-                  console.log('Refresh 버튼 클릭됨!');
-                  handleRegenerate();
-                }}
-                disabled={isRegenerating || refreshCount <= 0}
-                className="w-[228px] h-[228px] text-[128px] text-[#451F0D] bg-[#E4BE50] rounded-full font-bold z-20 flex items-center justify-center p-0 overflow-visible disabled:opacity-50 disabled:cursor-not-allowed"
-                title="다시 생성"
-              >
-                <IoMdRefresh style={{ width: '180px', height: '180px' }} />
-              </Button>
-              
-            </div>
+            {localRefreshCount > 0 && (
+              <div className="w-[228px] flex flex-col items-center justify-center gap-4">
+                <Button
+                  onClick={() => {
+                    console.log("Refresh 버튼 클릭됨!");
+                    handleRegenerate();
+                  }}
+                  disabled={isRegenerating}
+                  className="w-[228px] h-[228px] text-[128px] text-[#451F0D] bg-[#E4BE50] rounded-full font-bold z-20 flex items-center justify-center p-0 overflow-visible disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="다시 생성"
+                >
+                  <IoMdRefresh style={{ width: "180px", height: "180px" }} />
+                </Button>
+              </div>
+            )}
 
             <div className="w-[684px]">
               <Button

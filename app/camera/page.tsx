@@ -1,4 +1,4 @@
-'use client'
+"use client";
 import { Suspense, use, useRef, useEffect, useState, useCallback } from "react";
 import Loading from "@/app/loading";
 import Lottie from "lottie-react";
@@ -8,9 +8,17 @@ import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
 import { useButtonSound } from "@/app/components/ButtonSound";
 import { toast } from "sonner";
-import { capturePhotoFromVideo, generatePhotoFileName, blobToDataURL } from "@/utils/camera";
+import {
+  capturePhotoFromVideo,
+  generatePhotoFileName,
+  blobToDataURL,
+} from "@/utils/camera";
 import { requestFaceSwap, pollJobStatus } from "@/utils/faceSwap";
-import { saveImageRecord, pollForImageResult, requestImageProcessing } from "@/utils/imagePolling";
+import {
+  saveImageRecord,
+  pollForImageResult,
+  requestImageProcessing,
+} from "@/utils/imagePolling";
 import { WebcamComponent } from "./components/WebcamComponent";
 import { CameraCorners } from "./components/CameraCorners";
 import { ProcessingStatus } from "./components/ProcessingStatus";
@@ -42,7 +50,8 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [showLottieLoader, setShowLottieLoader] = useState(false);
-  const [processingMessage, setProcessingMessage] = useState("이미지 생성중...");
+  const [processingMessage, setProcessingMessage] =
+    useState("이미지 생성중...");
   const { playSound } = useButtonSound();
   const { setImageData } = useImageStore();
   const flashSoundRef = useRef<HTMLAudioElement | null>(null);
@@ -52,7 +61,7 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
   useEffect(() => {
     flashSoundRef.current = new Audio("/flash.wav");
     flashSoundRef.current.load();
-    
+
     return () => {
       if (flashSoundRef.current) {
         flashSoundRef.current.pause();
@@ -68,11 +77,11 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
   const uploadPhotoToSupabase = async (photoBlob: Blob, fileName: string) => {
     try {
       const formData = new FormData();
-      formData.append('file', photoBlob, fileName);
-      formData.append('fileName', fileName);
+      formData.append("file", photoBlob, fileName);
+      formData.append("fileName", fileName);
 
-      const response = await fetch('/api/upload-photo', {
-        method: 'POST',
+      const response = await fetch("/api/upload-photo", {
+        method: "POST",
         body: formData,
       });
 
@@ -102,7 +111,7 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
 
       // 1. image 테이블에 job_id와 picture_camera 저장
       const saveResult = await saveImageRecord(uploadedPhotoUrl);
-      
+
       if (!saveResult.success || !saveResult.jobId) {
         toast("이미지 저장 실패", {
           description: saveResult.error || "이미지 저장에 실패했습니다.",
@@ -113,12 +122,13 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
 
       setProcessingMessage("이미지 생성 중...");
 
-      // 2. AWS API에 이미지 처리 요청 전송
+      // 2. AWS API에 이미지 처리 요청 전송 (초기 생성이므로 regenerationCount = 2)
       const awsResult = await requestImageProcessing(
         uploadedPhotoUrl,
         characterId,
         situation || "변신", // situation이 없으면 기본값 사용
-        saveResult.jobId
+        saveResult.jobId,
+        2 // 초기 생성
       );
 
       if (!awsResult.success) {
@@ -132,40 +142,37 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
       setProcessingMessage("결과 대기 중...");
 
       // 3. result 값이 들어올 때까지 polling
-      const pollingResult = await pollForImageResult(
-        saveResult.jobId,
-        {
-          maxAttempts: 60, // 5분 대기
-          intervalMs: 5000, // 5초마다 체크
-          onProgress: (attempt, maxAttempts) => {
-            const remainingTime = Math.ceil((maxAttempts - attempt) * 5 / 60);
-            setProcessingMessage(`결과 대기 중... `);
-          }
-        }
-      );
+      const pollingResult = await pollForImageResult(saveResult.jobId, {
+        maxAttempts: 60, // 5분 대기
+        intervalMs: 5000, // 5초마다 체크
+        onProgress: (attempt, maxAttempts) => {
+          const remainingTime = Math.ceil(((maxAttempts - attempt) * 5) / 60);
+          setProcessingMessage(`결과 대기 중... `);
+        },
+      });
 
-      console.log('[Camera] Polling completed:', {
+      console.log("[Camera] Polling completed:", {
         success: pollingResult.success,
         hasData: !!pollingResult.data,
         hasResult: !!pollingResult.data?.result,
-        result: pollingResult.data?.result
+        result: pollingResult.data?.result,
       });
 
       if (pollingResult.success && pollingResult.data?.result) {
         // 3. API 응답 데이터에서 background_removed_image_url 추출
         const resultData = pollingResult.data.result;
 
-        console.log('[Camera] Processing result data:', {
+        console.log("[Camera] Processing result data:", {
           resultDataType: typeof resultData,
-          resultData: resultData
+          resultData: resultData,
         });
 
         try {
           // background_removed_image_url 추출
-          let backgroundImageUrl = '';
+          let backgroundImageUrl = "";
 
           // result가 문자열(URL)인 경우 직접 사용
-          if (typeof resultData === 'string') {
+          if (typeof resultData === "string") {
             backgroundImageUrl = resultData;
           } else if (resultData.background_removed_image_url) {
             backgroundImageUrl = resultData.background_removed_image_url;
@@ -174,10 +181,15 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
             backgroundImageUrl = resultData.result_image_url;
           }
 
-          console.log('[Camera] Extracted background_removed_image_url:', backgroundImageUrl);
+          console.log(
+            "[Camera] Extracted background_removed_image_url:",
+            backgroundImageUrl
+          );
 
           if (backgroundImageUrl) {
-            console.log('[Camera] Navigating to complete page with background image URL...');
+            console.log(
+              "[Camera] Navigating to complete page with background image URL..."
+            );
             // Zustand store에 이미지 정보 저장
             setImageData({
               characterId: characterId,
@@ -185,7 +197,11 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
               backgroundRemovedImageUrl: backgroundImageUrl,
               jobId: saveResult.jobId,
             });
-            router.push(`/complete?character=${characterId}&backgroundImage=${encodeURIComponent(backgroundImageUrl)}&jobId=${saveResult.jobId}`);
+            router.push(
+              `/complete?character=${characterId}&backgroundImage=${encodeURIComponent(
+                backgroundImageUrl
+              )}&jobId=${saveResult.jobId}`
+            );
           } else {
             toast("이미지 URL을 찾을 수 없습니다", {
               description: "생성된 이미지 URL을 찾을 수 없습니다.",
@@ -193,14 +209,14 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
             setShowLottieLoader(false);
           }
         } catch (error) {
-          console.log('[Camera] Failed to process result data:', error);
+          console.log("[Camera] Failed to process result data:", error);
           toast("결과 데이터 처리 실패", {
             description: "결과 데이터를 처리하는데 실패했습니다.",
           });
           setShowLottieLoader(false);
         }
       } else {
-        console.log('[Camera] Polling failed:', pollingResult.error);
+        console.log("[Camera] Polling failed:", pollingResult.error);
         toast("이미지 생성 실패", {
           description: pollingResult.error || "이미지 생성에 실패했습니다.",
         });
@@ -208,7 +224,10 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
       }
     } catch (error) {
       toast("처리 중 오류 발생", {
-        description: error instanceof Error ? error.message : "알 수 없는 오류가 발생했습니다.",
+        description:
+          error instanceof Error
+            ? error.message
+            : "알 수 없는 오류가 발생했습니다.",
       });
       setShowLottieLoader(false);
     }
@@ -229,23 +248,23 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
 
     try {
       setIsUploading(true);
-      
+
       // 사진 캡처
       const photoBlob = await capturePhotoFromVideo(videoElementRef.current);
-      
+
       // 미리보기용 Data URL 생성
       const photoDataURL = await blobToDataURL(photoBlob);
       setCapturedPhoto(photoDataURL);
 
       // 파일명 생성
       const fileName = generatePhotoFileName();
-      
+
       // Supabase에 업로드
       const uploadResult = await uploadPhotoToSupabase(photoBlob, fileName);
-      
+
       if (uploadResult && uploadResult.publicUrl) {
         setIsUploading(false);
-        
+
         // 얼굴 스왑 처리 시작
         await processWithFaceSwap(uploadResult.publicUrl);
       } else {
@@ -264,12 +283,12 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
 
   const handleTransform = useCallback(() => {
     playSound();
-    
+
     // 플래시 음향 재생
     if (flashSoundRef.current) {
       flashSoundRef.current.currentTime = 0;
       const playPromise = flashSoundRef.current.play();
-      
+
       if (playPromise !== undefined) {
         playPromise
           .then(() => {
@@ -280,13 +299,13 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
               description: "오디오 파일을 재생할 수 없습니다",
               action: {
                 label: "확인",
-                onClick: () => {}
-              }
+                onClick: () => {},
+              },
             });
           });
       }
     }
-    
+
     // 300ms 후에 카운트다운 시작
     setTimeout(() => {
       setIsCountingDown(true);
@@ -296,10 +315,10 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
   const handleCountdownComplete = useCallback(() => {
     // 카운트다운 완료 후 바로 사진을 캡처하고 플래시 효과 시작
     captureAndUploadPhoto();
-    
+
     setShowWhiteCircle(true);
     setIsCountingDown(false);
-    
+
     // 플래시 효과 종료
     setTimeout(() => {
       setShowWhiteCircle(false);
@@ -355,28 +374,26 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
         {showLottieLoader && (
           <div className="absolute inset-0 z-50 rounded-full overflow-hidden flex items-center justify-center">
             <div className="w-full h-full">
-              <Lottie 
-                animationData={loaderAnimation} 
+              <Lottie
+                animationData={loaderAnimation}
                 loop={true}
                 autoplay={true}
-                style={{ width: '100%', height: '100%' }}
+                style={{ width: "100%", height: "100%" }}
               />
             </div>
           </div>
         )}
 
-
-
         {/* 카운트다운 */}
         {!showWhiteCircle && !showLottieLoader && (
-          <CountdownOverlay 
+          <CountdownOverlay
             isCountingDown={isCountingDown}
             onCountdownComplete={handleCountdownComplete}
           />
         )}
 
         {/* 처리 상태 표시 */}
-        <ProcessingStatus 
+        <ProcessingStatus
           isUploading={isUploading}
           showLottieLoader={showLottieLoader}
           processingMessage={processingMessage}
@@ -419,14 +436,20 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
       <div className="flex items-center justify-center z-30 flex-row mb-[358px] animate-fade-in-up">
         <Button
           onClick={handleTransform}
-          disabled={isCountingDown || showWhiteCircle || isUploading || showLottieLoader}
+          disabled={
+            isCountingDown || showWhiteCircle || isUploading || showLottieLoader
+          }
           className={`w-[1523px] h-[281px] text-[128px] font-bold z-20 rounded-[60px] border-4 border-[#471F0D] transition-all duration-200 hover:scale-101 active:scale-99 ${
             isCountingDown || showWhiteCircle || isUploading || showLottieLoader
               ? "text-[#8B7355] bg-[#A8956B] cursor-not-allowed opacity-50"
               : "text-[#451F0D] bg-[#E4BE50] hover:bg-[#E4BE50]/90 cursor-pointer"
           }`}
         >
-          {isUploading ? "저장 중..." : showLottieLoader ? "변신 중..." : "수군으로 변신하기"}
+          {isUploading
+            ? "저장 중..."
+            : showLottieLoader
+            ? "변신 중..."
+            : "수군으로 변신하기"}
         </Button>
       </div>
     </div>

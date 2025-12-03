@@ -18,43 +18,118 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import Image from "next/image";
 import { Character } from "../types";
-import { saveImageRecord, pollForImageResult, requestImageProcessing } from "@/utils/imagePolling";
+import {
+  saveImageRecord,
+  pollForImageResult,
+  requestImageProcessing,
+} from "@/utils/imagePolling";
 
 // 한글 조합을 위한 유틸리티 함수들
-const CHOSUNG = ['ㄱ', 'ㄲ', 'ㄴ', 'ㄷ', 'ㄸ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅃ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅉ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ'];
-const JUNGSUNG = ['ㅏ', 'ㅐ', 'ㅑ', 'ㅒ', 'ㅓ', 'ㅔ', 'ㅕ', 'ㅖ', 'ㅗ', 'ㅘ', 'ㅙ', 'ㅚ', 'ㅛ', 'ㅜ', 'ㅝ', 'ㅞ', 'ㅟ', 'ㅠ', 'ㅡ', 'ㅢ', 'ㅣ'];
-const JONGSUNG = ['', 'ㄱ', 'ㄲ', 'ㄳ', 'ㄴ', 'ㄵ', 'ㄶ', 'ㄷ', 'ㄹ', 'ㄺ', 'ㄻ', 'ㄼ', 'ㄽ', 'ㄾ', 'ㄿ', 'ㅀ', 'ㅁ', 'ㅂ', 'ㅄ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ'];
+const CHOSUNG = [
+  "ㄱ",
+  "ㄲ",
+  "ㄴ",
+  "ㄷ",
+  "ㄸ",
+  "ㄹ",
+  "ㅁ",
+  "ㅂ",
+  "ㅃ",
+  "ㅅ",
+  "ㅆ",
+  "ㅇ",
+  "ㅈ",
+  "ㅉ",
+  "ㅊ",
+  "ㅋ",
+  "ㅌ",
+  "ㅍ",
+  "ㅎ",
+];
+const JUNGSUNG = [
+  "ㅏ",
+  "ㅐ",
+  "ㅑ",
+  "ㅒ",
+  "ㅓ",
+  "ㅔ",
+  "ㅕ",
+  "ㅖ",
+  "ㅗ",
+  "ㅘ",
+  "ㅙ",
+  "ㅚ",
+  "ㅛ",
+  "ㅜ",
+  "ㅝ",
+  "ㅞ",
+  "ㅟ",
+  "ㅠ",
+  "ㅡ",
+  "ㅢ",
+  "ㅣ",
+];
+const JONGSUNG = [
+  "",
+  "ㄱ",
+  "ㄲ",
+  "ㄳ",
+  "ㄴ",
+  "ㄵ",
+  "ㄶ",
+  "ㄷ",
+  "ㄹ",
+  "ㄺ",
+  "ㄻ",
+  "ㄼ",
+  "ㄽ",
+  "ㄾ",
+  "ㄿ",
+  "ㅀ",
+  "ㅁ",
+  "ㅂ",
+  "ㅄ",
+  "ㅅ",
+  "ㅆ",
+  "ㅇ",
+  "ㅈ",
+  "ㅊ",
+  "ㅋ",
+  "ㅌ",
+  "ㅍ",
+  "ㅎ",
+];
 
 // 복합 모음 조합 규칙
 const JUNGSUNG_COMBINATIONS: { [key: string]: string } = {
-  'ㅗㅏ': 'ㅘ',
-  'ㅗㅐ': 'ㅙ',
-  'ㅗㅣ': 'ㅚ',
-  'ㅜㅓ': 'ㅝ',
-  'ㅜㅔ': 'ㅞ',
-  'ㅜㅣ': 'ㅟ',
-  'ㅡㅣ': 'ㅢ'
+  ㅗㅏ: "ㅘ",
+  ㅗㅐ: "ㅙ",
+  ㅗㅣ: "ㅚ",
+  ㅜㅓ: "ㅝ",
+  ㅜㅔ: "ㅞ",
+  ㅜㅣ: "ㅟ",
+  ㅡㅣ: "ㅢ",
 };
 
 // 복합 자음 조합 규칙
 const JONGSUNG_COMBINATIONS: { [key: string]: string } = {
-  'ㄱㅅ': 'ㄳ',
-  'ㄴㅈ': 'ㄵ',
-  'ㄴㅎ': 'ㄶ',
-  'ㄹㄱ': 'ㄺ',
-  'ㄹㅁ': 'ㄻ',
-  'ㄹㅂ': 'ㄼ',
-  'ㄹㅅ': 'ㄽ',
-  'ㄹㅌ': 'ㄾ',
-  'ㄹㅍ': 'ㄿ',
-  'ㄹㅎ': 'ㅀ',
-  'ㅂㅅ': 'ㅄ'
+  ㄱㅅ: "ㄳ",
+  ㄴㅈ: "ㄵ",
+  ㄴㅎ: "ㄶ",
+  ㄹㄱ: "ㄺ",
+  ㄹㅁ: "ㄻ",
+  ㄹㅂ: "ㄼ",
+  ㄹㅅ: "ㄽ",
+  ㄹㅌ: "ㄾ",
+  ㄹㅍ: "ㄿ",
+  ㄹㅎ: "ㅀ",
+  ㅂㅅ: "ㅄ",
 };
 
 // 문자가 한글인지 확인
 const isHangul = (char: string): boolean => {
   const code = char.charCodeAt(0);
-  return code >= 0xAC00 && code <= 0xD7A3;
+  return code >= 0xac00 && code <= 0xd7a3;
 };
 
 // 문자가 자음인지 확인
@@ -69,7 +144,7 @@ const isJungsung = (char: string): boolean => {
 
 // 한글 문자를 초성, 중성, 종성으로 분해
 const decomposeHangul = (char: string): [number, number, number] => {
-  const code = char.charCodeAt(0) - 0xAC00;
+  const code = char.charCodeAt(0) - 0xac00;
   const chosung = Math.floor(code / 588);
   const jungsung = Math.floor((code % 588) / 28);
   const jongsung = code % 28;
@@ -77,8 +152,12 @@ const decomposeHangul = (char: string): [number, number, number] => {
 };
 
 // 초성, 중성, 종성을 조합하여 한글 문자 생성
-const composeHangul = (chosung: number, jungsung: number, jongsung: number): string => {
-  const code = 0xAC00 + (chosung * 588) + (jungsung * 28) + jongsung;
+const composeHangul = (
+  chosung: number,
+  jungsung: number,
+  jongsung: number
+): string => {
+  const code = 0xac00 + chosung * 588 + jungsung * 28 + jongsung;
   return String.fromCharCode(code);
 };
 
@@ -87,15 +166,15 @@ const formatRoleWithSpaces = (role: string): string => {
   if (!role) {
     return role;
   }
-  
+
   const { length } = role;
-  
+
   if (length === 2) {
     // 2글자면 가운데에 스페이스 2개
-    return role[0] + '   ' + role[1];
+    return role[0] + "   " + role[1];
   } else if (length === 3) {
     // 3글자면 각 글자 사이에 스페이스 1개씩
-    return role[0] + ' ' + role[1] + ' ' + role[2];
+    return role[0] + " " + role[1] + " " + role[2];
   } else {
     // 4글자 이상이면 스페이스 없음
     return role;
@@ -121,7 +200,7 @@ const processKoreanInput = (currentText: string, newChar: string): string => {
     // 마지막 문자가 완성된 한글인 경우
     if (isHangul(lastChar)) {
       const [cho, jung, jong] = decomposeHangul(lastChar);
-      
+
       if (jong === 0) {
         // 종성이 없는 경우 종성 추가
         const newJongsungIndex = JONGSUNG.indexOf(newChar);
@@ -133,7 +212,7 @@ const processKoreanInput = (currentText: string, newChar: string): string => {
         const currentJong = JONGSUNG[jong];
         const combinationKey = currentJong + newChar;
         const combinedJong = JONGSUNG_COMBINATIONS[combinationKey];
-        
+
         if (combinedJong) {
           // 복합 종성 조합 가능한 경우
           const newJongsungIndex = JONGSUNG.indexOf(combinedJong);
@@ -147,7 +226,7 @@ const processKoreanInput = (currentText: string, newChar: string): string => {
         }
       }
     }
-    
+
     // 마지막 문자가 미완성 자음인 경우 그대로 추가
     return currentText + newChar;
   }
@@ -162,17 +241,17 @@ const processKoreanInput = (currentText: string, newChar: string): string => {
         return beforeText + composeHangul(chosungIndex, jungsungIndex, 0);
       }
     }
-    
+
     // 마지막 문자가 완성된 한글인 경우
     if (isHangul(lastChar)) {
       const [cho, jung, jong] = decomposeHangul(lastChar);
-      
+
       // 종성이 있는 경우, 종성을 초성으로 하는 새 글자 시작
       if (jong > 0) {
         const jongChar = JONGSUNG[jong];
         const newChosungIndex = CHOSUNG.indexOf(jongChar);
         const newJungsungIndex = JUNGSUNG.indexOf(newChar);
-        
+
         if (newChosungIndex !== -1 && newJungsungIndex !== -1) {
           const newLastChar = composeHangul(cho, jung, 0);
           const newChar2 = composeHangul(newChosungIndex, newJungsungIndex, 0);
@@ -183,7 +262,7 @@ const processKoreanInput = (currentText: string, newChar: string): string => {
         const currentJung = JUNGSUNG[jung];
         const combinationKey = currentJung + newChar;
         const combinedJung = JUNGSUNG_COMBINATIONS[combinationKey];
-        
+
         if (combinedJung) {
           const newJungsungIndex = JUNGSUNG.indexOf(combinedJung);
           if (newJungsungIndex !== -1) {
@@ -192,7 +271,7 @@ const processKoreanInput = (currentText: string, newChar: string): string => {
         }
       }
     }
-    
+
     return currentText + newChar;
   }
 
@@ -206,14 +285,18 @@ interface CharacterInteractionProps {
   existingImage?: string;
 }
 
-export default function CharacterInteraction({ character, characterId, existingImage }: CharacterInteractionProps) {
+export default function CharacterInteraction({
+  character,
+  characterId,
+  existingImage,
+}: CharacterInteractionProps) {
   const router = useRouter();
   const [isMicActive, setIsMicActive] = useState(false);
-  const [situation, setSituation] = useState('');
+  const [situation, setSituation] = useState("");
   const [showPromptContent, setShowPromptContent] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isFaceSwapping, setIsFaceSwapping] = useState(false);
-  const [modalInput, setModalInput] = useState('');
+  const [modalInput, setModalInput] = useState("");
   const [isKeyboardPressed, setIsKeyboardPressed] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { playSound } = useButtonSound();
@@ -224,7 +307,7 @@ export default function CharacterInteraction({ character, characterId, existingI
     isProcessing,
     timeLeft,
     toggleRecording,
-    setTranscript
+    setTranscript,
   } = useVoiceRecognition();
 
   // existingImage가 있으면 자동으로 페이스 스왑 진행
@@ -249,12 +332,13 @@ export default function CharacterInteraction({ character, characterId, existingI
           return;
         }
 
-        // 2. AWS API에 이미지 처리 요청
+        // 2. AWS API에 이미지 처리 요청 (초기 생성이므로 regenerationCount = 2)
         const awsResult = await requestImageProcessing(
           existingImage,
           characterId,
           "재생성", // situation은 재생성으로 설정
-          saveResult.jobId
+          saveResult.jobId,
+          2 // 초기 생성
         );
 
         if (!awsResult.success) {
@@ -267,18 +351,15 @@ export default function CharacterInteraction({ character, characterId, existingI
         }
 
         // 3. 결과 대기
-        const pollingResult = await pollForImageResult(
-          saveResult.jobId,
-          {
-            maxAttempts: 60,
-            intervalMs: 5000,
-          }
-        );
+        const pollingResult = await pollForImageResult(saveResult.jobId, {
+          maxAttempts: 60,
+          intervalMs: 5000,
+        });
 
         if (pollingResult.success && pollingResult.data?.result) {
           const resultData = pollingResult.data.result;
 
-          let backgroundImageUrl = '';
+          let backgroundImageUrl = "";
 
           if (resultData.background_removed_image_url) {
             backgroundImageUrl = resultData.background_removed_image_url;
@@ -287,7 +368,11 @@ export default function CharacterInteraction({ character, characterId, existingI
           }
 
           if (backgroundImageUrl) {
-            router.push(`/complete?character=${characterId}&backgroundImage=${encodeURIComponent(backgroundImageUrl)}&jobId=${saveResult.jobId}`);
+            router.push(
+              `/complete?character=${characterId}&backgroundImage=${encodeURIComponent(
+                backgroundImageUrl
+              )}&jobId=${saveResult.jobId}`
+            );
           } else {
             toast({
               title: "이미지 URL을 찾을 수 없습니다",
@@ -305,7 +390,10 @@ export default function CharacterInteraction({ character, characterId, existingI
       } catch (error) {
         toast({
           title: "오류 발생",
-          description: error instanceof Error ? error.message : "알 수 없는 오류가 발생했습니다.",
+          description:
+            error instanceof Error
+              ? error.message
+              : "알 수 없는 오류가 발생했습니다.",
         });
         setIsFaceSwapping(false);
       }
@@ -343,7 +431,7 @@ export default function CharacterInteraction({ character, characterId, existingI
   const handleMicClick = () => {
     playSound();
     setIsMicActive(!isMicActive);
-    
+
     if (!isRecording) {
       setShowPromptContent(false);
       toggleRecording();
@@ -383,7 +471,7 @@ export default function CharacterInteraction({ character, characterId, existingI
 
   // 모달에서 취소 버튼 클릭 처리
   const handleModalCancel = () => {
-    setModalInput('');
+    setModalInput("");
     setIsModalOpen(false);
     setIsKeyboardPressed(false);
   };
@@ -397,10 +485,14 @@ export default function CharacterInteraction({ character, characterId, existingI
       });
       return;
     }
-    
+
     playSound();
     setTimeout(() => {
-      router.push(`/camera?character=${characterId}&situation=${encodeURIComponent(situation)}`);
+      router.push(
+        `/camera?character=${characterId}&situation=${encodeURIComponent(
+          situation
+        )}`
+      );
     }, 300);
   };
 
@@ -426,7 +518,7 @@ export default function CharacterInteraction({ character, characterId, existingI
           className="text-[260px] font-bold text-center text-[#481F0E]"
           style={{ fontFamily: "MuseumClassic, serif" }}
         >
-          {formatRoleWithSpaces(character.role || '')}
+          {formatRoleWithSpaces(character.role || "")}
         </div>
         <div
           style={{ whiteSpace: "pre-line", fontFamily: "MuseumClassic, serif" }}
@@ -452,17 +544,15 @@ export default function CharacterInteraction({ character, characterId, existingI
       <div className="prompt flex flex-col items-center justify-center z-30 border-[25px] border-[#D3B582] rounded-[60px] w-[1666px] h-[390px] relative">
         {isRecording ? (
           <div className="flex flex-col items-center justify-center w-full h-full gap-8">
-            
             <div className="flex flex-col items-center gap-4">
-            {transcript && (
-                                <div className="text-[79px] font-bold text-center text-[#481F0E]">
-                                {transcript}
-                              </div>
+              {transcript && (
+                <div className="text-[79px] font-bold text-center text-[#481F0E]">
+                  {transcript}
+                </div>
               )}
               <div className="text-[48px] font-bold text-[#481F0E]/70">
                 남은 시간: {timeLeft}초
               </div>
-            
             </div>
           </div>
         ) : showPromptContent ? (
@@ -472,7 +562,7 @@ export default function CharacterInteraction({ character, characterId, existingI
                 <div className="text-[79px] font-bold text-center text-[#481F0E]">
                   캐릭터에 어떤 상황을 설정하고 싶으신가요?
                 </div>
-                <div 
+                <div
                   className="text-[72px] font-bold text-center text-[#481F0E]/50"
                   style={{ letterSpacing: "-0.03em" }}
                 >
@@ -481,7 +571,7 @@ export default function CharacterInteraction({ character, characterId, existingI
               </>
             ) : (
               <div className="w-full h-full flex items-center justify-center">
-                <div 
+                <div
                   className="text-[79px] font-bold text-center text-[#481F0E]"
                   style={{ letterSpacing: "-0.03em" }}
                 >
@@ -500,18 +590,18 @@ export default function CharacterInteraction({ character, characterId, existingI
       {/* 상호작용 버튼들 */}
       <div className="flex items-center justify-center z-30 flex-row mb-[358px] mt-[191px] gap-8">
         {/* 마이크 버튼 */}
-        <div 
+        <div
           className="relative w-[387px] h-[281px] cursor-pointer"
           onClick={handleMicClick}
         >
-          <Image 
-            src={isRecording ? "/mic2.png" : "/mic.png"} 
-            fill 
-            alt="mic" 
-            className="object-contain" 
+          <Image
+            src={isRecording ? "/mic2.png" : "/mic.png"}
+            fill
+            alt="mic"
+            className="object-contain"
           />
         </div>
-        
+
         {/* 입력완료 버튼 */}
         <div>
           <Button
@@ -528,22 +618,25 @@ export default function CharacterInteraction({ character, characterId, existingI
         </div>
 
         {/* 키보드 버튼과 모달 */}
-        <Dialog open={isModalOpen} onOpenChange={(open) => {
-          setIsModalOpen(open);
-          if (!open) {
-            setIsKeyboardPressed(false);
-          }
-        }}>
+        <Dialog
+          open={isModalOpen}
+          onOpenChange={(open) => {
+            setIsModalOpen(open);
+            if (!open) {
+              setIsKeyboardPressed(false);
+            }
+          }}
+        >
           <DialogTrigger asChild>
             <Button
               onClick={handleKeyboardClick}
               className="relative w-[387px] h-[281px] p-0 bg-transparent hover:bg-transparent border-none"
             >
-              <Image 
+              <Image
                 src={isKeyboardPressed ? "/keyboard2.png" : "/keyboard.png"}
-                fill 
-                alt="keyboard" 
-                className="object-contain" 
+                fill
+                alt="keyboard"
+                className="object-contain"
               />
             </Button>
           </DialogTrigger>
@@ -553,7 +646,7 @@ export default function CharacterInteraction({ character, characterId, existingI
                 상황 입력
               </DialogTitle>
             </DialogHeader>
-            
+
             <div className="flex flex-col gap-12 py-8">
               {/* 텍스트 입력 영역 */}
               <Textarea
@@ -562,17 +655,17 @@ export default function CharacterInteraction({ character, characterId, existingI
                 onChange={(e) => setModalInput(e.target.value)}
                 placeholder="캐릭터에 설정할 상황을 입력해주세요."
                 className="min-h-[400px] bg-white border-[#D3B582] border-4 text-[#481F0E] placeholder:text-[#481F0E]/50 resize-none"
-                style={{ 
-                  fontSize: '85px', 
-                  lineHeight: '1.4',
-                  padding: '32px'
+                style={{
+                  fontSize: "85px",
+                  lineHeight: "1.4",
+                  padding: "32px",
                 }}
                 autoFocus
                 // 키오스크/터치 디바이스에서 가상 키보드를 띄우기 위한 속성들
                 inputMode="text"
                 enterKeyHint="done"
               />
-              
+
               {/* 버튼 영역 */}
               <div className="flex justify-center gap-12">
                 <Button
