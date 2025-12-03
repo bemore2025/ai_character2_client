@@ -24,6 +24,7 @@ function CompletePageContent() {
     characterId: storedCharacterId,
     situation: storedSituation,
     backgroundRemovedImageUrl: storedImageUrl,
+    jobId: storedJobId,
   } = useImageStore();
   const [isMicActive, setIsMicActive] = useState(false);
   const [isKeyboardActive, setIsKeyboardActive] = useState(false);
@@ -540,9 +541,10 @@ function CompletePageContent() {
     console.log("storedCharacterId:", storedCharacterId);
     console.log("storedImageUrl:", storedImageUrl);
     console.log("storedSituation:", storedSituation);
+    console.log("storedJobId:", storedJobId);
     console.log("localRefreshCount:", localRefreshCount);
 
-    if (!storedCharacterId || !storedImageUrl) {
+    if (!storedCharacterId || !storedImageUrl || !storedJobId) {
       console.log("저장된 정보 없음");
       toast({
         title: "재생성 불가",
@@ -568,35 +570,28 @@ function CompletePageContent() {
     console.log("재생성 상태 설정 완료");
 
     try {
-      // 1. image 테이블에 job_id 저장
-      console.log("1. saveImageRecord 호출");
-      const saveResult = await saveImageRecord(storedImageUrl);
-      console.log("saveResult:", saveResult);
+      // 1. 기존 job_id 사용 (재생성이므로 새 레코드를 만들지 않음)
+      console.log("1. 기존 job_id 사용:", storedJobId);
 
-      if (!saveResult.success || !saveResult.jobId) {
-        console.log("이미지 저장 실패");
-        toast({
-          title: "이미지 저장 실패",
-          description: saveResult.error || "이미지 저장에 실패했습니다.",
-        });
-        setIsRegenerating(false);
-        return;
-      }
-
-      // 2. AWS API에 이미지 처리 요청 - regenerationCount 전달
+      // 2. AWS API에 이미지 처리 요청 - 감소된 regenerationCount 전달
       const currentRegenerationCount = parseInt(
         localStorage.getItem("regenerateCount") || "2"
       );
+      // 재생성이므로 감소된 값을 전달 (2 → 1, 1 → 0)
+      const nextRegenerationCount = Math.max(0, currentRegenerationCount - 1);
       console.log(
         "2. requestImageProcessing 호출 - regenerationCount:",
-        currentRegenerationCount
+        nextRegenerationCount,
+        "(현재 카운트:",
+        currentRegenerationCount,
+        ")"
       );
       const awsResult = await requestImageProcessing(
         storedImageUrl,
         storedCharacterId,
         storedSituation || "재생성",
-        saveResult.jobId,
-        currentRegenerationCount
+        storedJobId,
+        nextRegenerationCount
       );
       console.log("awsResult:", awsResult);
 
@@ -610,16 +605,16 @@ function CompletePageContent() {
         return;
       }
 
-      // 3. 결과 대기 - 현재 localStorage의 카운트를 전달
+      // 3. 결과 대기 - 감소된 regenerationCount를 전달 (AWS에 전달한 값과 동일)
       console.log(
         "3. pollForImageResult 시작 - regenerationCount:",
-        currentRegenerationCount
+        nextRegenerationCount
       );
 
-      const pollingResult = await pollForImageResult(saveResult.jobId, {
+      const pollingResult = await pollForImageResult(storedJobId, {
         maxAttempts: 60,
         intervalMs: 5000,
-        regenerationCount: currentRegenerationCount, // 재생성 횟수 전달
+        regenerationCount: nextRegenerationCount, // AWS에 전달한 값과 동일하게 전달
       });
       console.log("pollingResult:", pollingResult);
 
@@ -639,13 +634,6 @@ function CompletePageContent() {
 
         if (backgroundImageUrl) {
           console.log("5. 새로운 이미지 설정");
-          // 새로운 이미지로 페이지 리로드
-          setBackgroundRemovedImageUrl(backgroundImageUrl);
-          // QR 코드도 새로 생성해야 하므로 초기화
-          setIsImageUploadComplete(false);
-          // presigned URL 새로 생성
-          console.log("6. presigned URL 생성 시작");
-          await generatePresignedUrlAndCapture();
 
           // 재생성 성공 시 localStorage 카운트 감소
           const currentCount = parseInt(
@@ -656,10 +644,25 @@ function CompletePageContent() {
           setLocalRefreshCount(newCount);
           console.log("재생성 카운트 감소됨:", newCount);
 
-          toast({
-            title: "재생성 완료",
-            description: "새로운 이미지가 생성되었습니다.",
-          });
+          // 새로운 이미지로 상태 업데이트
+          setBackgroundRemovedImageUrl(backgroundImageUrl);
+
+          // QR 코드와 업로드 상태 초기화
+          setIsImageUploadComplete(false);
+          setQrCodeUrl("");
+          setUploadUrl("");
+
+          // presigned URL 새로 생성 (새 이미지가 반영된 상태에서)
+          console.log("6. presigned URL 생성 시작");
+          // 상태 업데이트가 완료될 때까지 대기
+          setTimeout(async () => {
+            await generatePresignedUrlAndCapture();
+
+            toast({
+              title: "재생성 완료",
+              description: "새로운 이미지가 생성되었습니다.",
+            });
+          }, 100);
         } else {
           console.log("이미지 URL 없음");
           toast({
