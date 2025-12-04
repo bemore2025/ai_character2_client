@@ -6,8 +6,8 @@ import { useAudioStore } from "@/app/store/useAudioStore";
 export default function BackgroundMusic() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const { isMuted, isIntroPlaying } = useAudioStore();
-  const normalVolume = 0.7; // 원래 0.3
-  const reducedVolume = 0.4; // 원래 0.15
+  const normalVolume = 0.1; // 원래 0.3
+  const reducedVolume = 0.6; // 원래 0.15
 
   useEffect(() => {
     // 오디오 요소 생성
