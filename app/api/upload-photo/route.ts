@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
       .from('pictures')
       .getPublicUrl(fileName);
 
-    await supabase.from('camera_history').insert({ url: urlData.publicUrl });
+    //await supabase.from('camera_history').insert({ url: urlData.publicUrl });
 
     return NextResponse.json({
       success: true,
