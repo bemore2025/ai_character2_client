@@ -200,7 +200,7 @@ function CompletePageContent() {
       const timer = setTimeout(() => {
         addDebugInfo("자동 프로세스 시작");
         captureAndUploadImage();
-      }, 2000);
+      }, 0);
       return () => clearTimeout(timer);
     };
 
@@ -220,7 +220,6 @@ function CompletePageContent() {
         return;
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 1000));
       addDebugInfo("Canvas 변환 시작");
 
       const dataUrl = await domtoimage.toJpeg(targetElement, {
