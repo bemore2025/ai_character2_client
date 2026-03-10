@@ -14,6 +14,9 @@ import { saveImageRecord, pollForImageResult, requestImageProcessing } from "@/u
 import Lottie from "lottie-react";
 import loaderAnimation from "@/public/loader.json";
 
+const CARD_WIDTH = 1594;
+const CARD_HEIGHT = 2543;
+
 function CompletePageContent() {
   const router = useRouter();
   const {
@@ -22,9 +25,6 @@ function CompletePageContent() {
     backgroundRemovedImageUrl: storedImageUrl,
     jobId: storedJobId,
   } = useImageStore();
-
-  const CARD_WIDTH = 900;
-  const CARD_HEIGHT = 1440;
 
   const [isMicActive, setIsMicActive] = useState(false);
   const [isKeyboardActive, setIsKeyboardActive] = useState(false);
@@ -221,24 +221,27 @@ function CompletePageContent() {
       }
 
       addDebugInfo("Canvas 변환 시작");
-
+      await new Promise(resolve => setTimeout(resolve, 500));
       const dataUrl = await domtoimage.toJpeg(targetElement, {
         bgcolor: "#B9D8F0",
-        width: CARD_WIDTH,
-        height: CARD_HEIGHT,
-        quality: 0.88,
-        style: {
-          transform: "scale(1)",
-          transformOrigin: "top left",
-          width: `${CARD_WIDTH}px`,
-          height: `${CARD_HEIGHT}px`,
-        },
+        width: targetElement.offsetWidth,
+        height: targetElement.offsetHeight,
+        quality: 0.92,
       });
 
       addDebugInfo("이미지 변환 완료, Supabase 업로드 준비");
 
-      const response = await fetch(dataUrl);
-      const blob = await response.blob();
+      const byteString = atob(dataUrl.split(',')[1]);
+      const mimeString = dataUrl.split(',')[0].split(':')[1].split(';')[0];
+
+      const ab = new ArrayBuffer(byteString.length);
+      const ia = new Uint8Array(ab);
+
+      for (let i = 0; i < byteString.length; i++) {
+        ia[i] = byteString.charCodeAt(i);
+      }
+
+      const blob = new Blob([ia], { type: mimeString });
       const file = new File([blob], "photo-card.jpg", { type: "image/jpeg" });
 
       const formData = new FormData();
@@ -306,7 +309,7 @@ function CompletePageContent() {
       setIsLoading(false);
       setIsImageUploadComplete(true);
     }
-  }, [addDebugInfo, CARD_WIDTH, CARD_HEIGHT]);
+  }, [addDebugInfo]);
 
   useEffect(() => {
     if (isImageUploadComplete) return;
@@ -475,41 +478,23 @@ function CompletePageContent() {
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
       const dataUrl = await domtoimage.toJpeg(targetElement, {
-        bgcolor: "#B9D8F0",
-        width: CARD_WIDTH,
-        height: CARD_HEIGHT,
-        quality: 0.88,
-        style: {
-          transform: "scale(1)",
-          transformOrigin: "top left",
-          width: `${CARD_WIDTH}px`,
-          height: `${CARD_HEIGHT}px`,
-        },
-        filter: (node) => {
-          const element = node as Element;
-          if (element.tagName === "SCRIPT" || element.tagName === "STYLE") return false;
-          if (element.tagName === "IMG") {
-            const imgElement = element as HTMLImageElement;
-            if (imgElement.style) {
-              imgElement.style.border = "none";
-              imgElement.style.outline = "none";
-              imgElement.style.boxShadow = "none";
-            }
-          }
-          return true;
-        },
-      });
-
-      const response = await fetch(dataUrl);
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
+       bgcolor: "#B9D8F0",
+       width: targetElement.offsetWidth,
+       height: targetElement.offsetHeight,
+       quality: 0.92,
+       filter: (node) => {
+      const element = node as Element;
+      if (element.tagName === "SCRIPT" || element.tagName === "STYLE") return false;
+      return true;
+    },
+  });
+      
       const link = document.createElement("a");
-      link.download = `포토카드_${character?.role || "character"}_${new Date().getTime()}.jpg`;
-      link.href = url;
+      link.download = `포토카드_${character?.role || "character"}_${Date.now()}.jpg`;
+      link.href = dataUrl;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      URL.revokeObjectURL(url);
       toast({ title: "다운로드 완료", description: "포토카드 이미지가 다운로드되었습니다." });
     } catch (error) {
       toast({
@@ -715,11 +700,12 @@ function CompletePageContent() {
                 backgroundRepeat: "no-repeat",
               }}
             >
-              <img
-                src={backgroundRemovedImageUrl || character?.picture_character || ""}
-                alt={character?.role || "character"}
-                className="cartoon-image object-cover w-[1348px] h-[2050px] rounded-[40px]"
-              />
+           <img
+              crossOrigin="anonymous"
+              src={backgroundRemovedImageUrl || character?.picture_character || ""}
+              alt={character?.role || "character"}
+              className="cartoon-image object-cover w-[1348px] h-[2050px] rounded-[40px]"
+            />
             </div>
 
             <div className="relative w-full h-[290px]">
