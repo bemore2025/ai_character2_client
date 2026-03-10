@@ -23,6 +23,9 @@ function CompletePageContent() {
     jobId: storedJobId,
   } = useImageStore();
 
+  const CARD_WIDTH = 900;
+  const CARD_HEIGHT = 1440;
+
   const [isMicActive, setIsMicActive] = useState(false);
   const [isKeyboardActive, setIsKeyboardActive] = useState(false);
   const [isCountingDown, setIsCountingDown] = useState(false);
@@ -34,7 +37,6 @@ function CompletePageContent() {
   const [isLoading, setIsLoading] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [qrCodeUrl, setQrCodeUrl] = useState("");
-  // ✅ 변경: uploadUrl, uploadToken, filePath state 제거 (AWS presigned 방식 제거)
   const [isImageUploadComplete, setIsImageUploadComplete] = useState(false);
   const [isQrReady, setIsQrReady] = useState(false);
   const [showQrInCard, setShowQrInCard] = useState(false);
@@ -174,7 +176,7 @@ function CompletePageContent() {
           }
         }
       } catch (error) {
-        setBackgroundRemovedImageUrl(resultImageParam);
+        setBackgroundRemovedImageUrl(resultImageParam || "");
       }
     }
   }, [backgroundImageParam, resultImageParam, addDebugInfo]);
@@ -189,7 +191,6 @@ function CompletePageContent() {
     }
   }, [imageParam, backgroundImageParam, resultImageParam]);
 
-  // ✅ 변경: autoStart에서 generatePresignedUrlAndCapture → captureAndUploadImage 직접 호출
   useEffect(() => {
     const autoStart = async () => {
       if (isImageUploadComplete || imageParam) {
@@ -208,7 +209,6 @@ function CompletePageContent() {
     }
   }, [isImageUploadComplete, imageParam]);
 
-  // ✅ 변경: captureAndUploadImage - AWS presigned 제거, /api/upload-image 사용
   const captureAndUploadImage = useCallback(async () => {
     try {
       addDebugInfo("이미지 캡처 시작");
@@ -223,16 +223,16 @@ function CompletePageContent() {
       await new Promise((resolve) => setTimeout(resolve, 1000));
       addDebugInfo("Canvas 변환 시작");
 
-      const dataUrl = await domtoimage.toPng(targetElement, {
+      const dataUrl = await domtoimage.toJpeg(targetElement, {
         bgcolor: "#B9D8F0",
-        width: 1594,
-        height: 2543,
-        quality: 1.0,
+        width: CARD_WIDTH,
+        height: CARD_HEIGHT,
+        quality: 0.88,
         style: {
           transform: "scale(1)",
           transformOrigin: "top left",
-          width: "1594px",
-          height: "2543px",
+          width: `${CARD_WIDTH}px`,
+          height: `${CARD_HEIGHT}px`,
         },
       });
 
@@ -240,14 +240,13 @@ function CompletePageContent() {
 
       const response = await fetch(dataUrl);
       const blob = await response.blob();
-      const file = new File([blob], "photo-card.png", { type: "image/png" });
+      const file = new File([blob], "photo-card.jpg", { type: "image/jpeg" });
 
       const formData = new FormData();
       formData.append("file", file);
 
       addDebugInfo(`Supabase 업로드 시작 - 파일 크기: ${file.size} bytes`);
 
-      // ✅ 핵심 변경: AWS API Gateway → /api/upload-image (Supabase images/photocards)
       let uploadResult;
       let retryCount = 0;
       const maxRetries = 3;
@@ -266,11 +265,9 @@ function CompletePageContent() {
           if (uploadResult.success && uploadResult.url) {
             addDebugInfo(`Supabase 업로드 성공: ${uploadResult.url.substring(0, 60)}...`);
 
-            // ✅ 기존과 동일하게 qrCodeUrl 설정 → QR코드 + 출력에 사용
             setQrCodeUrl(uploadResult.url);
             setShowQrInCard(true);
 
-            // URL 파라미터에 이미지 URL 추가 (기존 방식 유지)
             const currentUrl = window.location.href;
             const url = new URL(currentUrl);
             url.searchParams.set("image", uploadResult.url);
@@ -310,14 +307,11 @@ function CompletePageContent() {
       setIsLoading(false);
       setIsImageUploadComplete(true);
     }
-  }, [addDebugInfo]);
+  }, [addDebugInfo, CARD_WIDTH, CARD_HEIGHT]);
 
-  // QR 코드가 준비된 후 이미지 캡처 및 업로드 (imageParam 없을 때)
   useEffect(() => {
     if (isImageUploadComplete) return;
     if (qrCodeUrl) {
-      // qrCodeUrl이 이미 Supabase URL로 설정된 경우 (imageParam에서 복원)
-      // 추가 캡처 불필요
       addDebugInfo("QR URL 이미 설정됨, 추가 캡처 스킵");
     }
   }, [qrCodeUrl]);
@@ -383,7 +377,10 @@ function CompletePageContent() {
       );
 
       if (!awsResult.success) {
-        toast({ title: "이미지 처리 요청 실패", description: awsResult.error || "이미지 처리 요청에 실패했습니다." });
+        toast({
+          title: "이미지 처리 요청 실패",
+          description: awsResult.error || "이미지 처리 요청에 실패했습니다.",
+        });
         setIsRegenerating(false);
         return;
       }
@@ -417,13 +414,15 @@ function CompletePageContent() {
           setIsImageUploadComplete(false);
           setQrCodeUrl("");
 
-          // ✅ 변경: presigned URL 생성 단계 없이 바로 captureAndUploadImage 호출
           setTimeout(async () => {
             await captureAndUploadImage();
             toast({ title: "재생성 완료", description: "새로운 이미지가 생성되었습니다." });
           }, 100);
         } else {
-          toast({ title: "이미지 URL을 찾을 수 없습니다", description: "생성된 이미지 URL을 찾을 수 없습니다." });
+          toast({
+            title: "이미지 URL을 찾을 수 없습니다",
+            description: "생성된 이미지 URL을 찾을 수 없습니다.",
+          });
         }
       } else {
         toast({ title: "이미지 생성 실패", description: "이미지 생성에 실패했습니다." });
@@ -463,7 +462,11 @@ function CompletePageContent() {
       playSound();
       const targetElement = photoCardRef.current;
       if (!targetElement) {
-        toast({ title: "오류", description: "이미지를 생성할 수 없습니다.", variant: "destructive" });
+        toast({
+          title: "오류",
+          description: "이미지를 생성할 수 없습니다.",
+          variant: "destructive",
+        });
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 3000));
@@ -472,16 +475,16 @@ function CompletePageContent() {
       }
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      const dataUrl = await domtoimage.toPng(targetElement, {
+      const dataUrl = await domtoimage.toJpeg(targetElement, {
         bgcolor: "#B9D8F0",
-        width: 1594,
-        height: 2543,
-        quality: 1.0,
+        width: CARD_WIDTH,
+        height: CARD_HEIGHT,
+        quality: 0.88,
         style: {
           transform: "scale(1)",
           transformOrigin: "top left",
-          width: "1594px",
-          height: "2543px",
+          width: `${CARD_WIDTH}px`,
+          height: `${CARD_HEIGHT}px`,
         },
         filter: (node) => {
           const element = node as Element;
@@ -502,7 +505,7 @@ function CompletePageContent() {
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
-      link.download = `포토카드_${character?.role || "character"}_${new Date().getTime()}.png`;
+      link.download = `포토카드_${character?.role || "character"}_${new Date().getTime()}.jpg`;
       link.href = url;
       document.body.appendChild(link);
       link.click();
@@ -510,11 +513,14 @@ function CompletePageContent() {
       URL.revokeObjectURL(url);
       toast({ title: "다운로드 완료", description: "포토카드 이미지가 다운로드되었습니다." });
     } catch (error) {
-      toast({ title: "오류", description: "이미지 다운로드 중 오류가 발생했습니다.", variant: "destructive" });
+      toast({
+        title: "오류",
+        description: "이미지 다운로드 중 오류가 발생했습니다.",
+        variant: "destructive",
+      });
     }
   };
 
-  // handlePrint는 기존 코드 완전 동일 유지 (qrCodeUrl만 참조)
   const handlePrint = () => {
     const printWindow = window.open("", "_blank");
     if (!printWindow) return;
@@ -624,11 +630,30 @@ function CompletePageContent() {
               src="/title_img.png"
               alt="title decoration"
               className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-0 flex-shrink-0"
-              style={{ width: "1226px", height: "149px", minWidth: "1226px", minHeight: "149px", maxWidth: "1226px", maxHeight: "149px", border: "none", outline: "none", boxShadow: "none", backgroundColor: "transparent" }}
+              style={{
+                width: "1226px",
+                height: "149px",
+                minWidth: "1226px",
+                minHeight: "149px",
+                maxWidth: "1226px",
+                maxHeight: "149px",
+                border: "none",
+                outline: "none",
+                boxShadow: "none",
+                backgroundColor: "transparent",
+              }}
             />
             <span
               className="relative z-10 text-black role-name"
-              style={{ fontFamily: "Galmuri7", fontSize: "189px", letterSpacing: "-5%", border: "none", outline: "none", boxShadow: "none", backgroundColor: "transparent" }}
+              style={{
+                fontFamily: "Galmuri7",
+                fontSize: "189px",
+                letterSpacing: "-5%",
+                border: "none",
+                outline: "none",
+                boxShadow: "none",
+                backgroundColor: "transparent",
+              }}
             >
               {formatRoleText(character?.role || "")}
             </span>
@@ -638,13 +663,27 @@ function CompletePageContent() {
             {character?.star_count && character.star_count > 0 && (
               <div
                 className="absolute bottom-[480px] right-[50px] z-30 flex flex-col items-center gap-2"
-                style={{ border: "none", outline: "none", boxShadow: "none", backgroundColor: "transparent" }}
+                style={{
+                  border: "none",
+                  outline: "none",
+                  boxShadow: "none",
+                  backgroundColor: "transparent",
+                }}
               >
                 {Array.from({ length: character.star_count }, (_, index) => (
                   <div
                     key={index}
                     className="w-[136px] h-[136px] relative"
-                    style={{ backgroundImage: "url(/star.png)", backgroundSize: "contain", backgroundRepeat: "no-repeat", backgroundPosition: "center", backgroundColor: "transparent", border: "none", outline: "none", boxShadow: "none" }}
+                    style={{
+                      backgroundImage: "url(/star.png)",
+                      backgroundSize: "contain",
+                      backgroundRepeat: "no-repeat",
+                      backgroundPosition: "center",
+                      backgroundColor: "transparent",
+                      border: "none",
+                      outline: "none",
+                      boxShadow: "none",
+                    }}
                   />
                 ))}
               </div>
@@ -655,7 +694,12 @@ function CompletePageContent() {
               style={{ backgroundColor: "#B9D8F0" }}
             >
               {qrCodeUrl ? (
-                <QRCodeComponent value={qrCodeUrl} size={380} className="rounded-lg border-none" onReady={handleQrReady} />
+                <QRCodeComponent
+                  value={qrCodeUrl}
+                  size={380}
+                  className="rounded-lg border-none"
+                  onReady={handleQrReady}
+                />
               ) : (
                 <div className="w-[380px] h-[380px] bg-white flex items-center justify-center">
                   <div className="text-[24px] text-gray-400">QR 준비중</div>
@@ -665,7 +709,12 @@ function CompletePageContent() {
 
             <div
               className="absolute inset-0 border-[21px] border-black thick-container rounded-[60px]"
-              style={{ backgroundImage: `url("/card_bg2.png")`, backgroundSize: "cover", backgroundPosition: "center", backgroundRepeat: "no-repeat" }}
+              style={{
+                backgroundImage: `url("/card_bg2.png")`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+                backgroundRepeat: "no-repeat",
+              }}
             >
               <img
                 src={backgroundRemovedImageUrl || character?.picture_character || ""}
@@ -679,35 +728,69 @@ function CompletePageContent() {
               <div className="w-full h-[290px] z-20 bg-[#E4BE50] flex flex-row border-none relative">
                 <div
                   className="absolute w-[814px] h-[298px] z-30 flex flex-col items-center justify-center bg-[#B9D8F0] rounded-[130px] border-[21px] border-black"
-                  style={{ top: "-350px", left: "32.5%", transform: "translateX(-50%)", fontFamily: "MuseumClassic, serif" }}
+                  style={{
+                    top: "-350px",
+                    left: "32.5%",
+                    transform: "translateX(-50%)",
+                    fontFamily: "MuseumClassic, serif",
+                  }}
                 >
                   <div
                     className="text-[95px] text-[#000000] leading-tight text-center px-10 whitespace-pre-line"
                     style={{ fontFamily: "DNFBitBitv2, monospace", whiteSpace: "pre-wrap" }}
                     dangerouslySetInnerHTML={{
-                      __html: randomMessage
-                        .replace(/\/n/g, "\n")
-                        .split("\n")
-                        .join("<br />"),
+                      __html: randomMessage.replace(/\/n/g, "\n").split("\n").join("<br />"),
                     }}
                   ></div>
                 </div>
 
                 <div className="flex-1 flex flex-row border-none relative h-[287.5px]">
                   <div className="flex-1 flex flex-col border-none">
-                    <div className="flex-1 bg-[#0068B7] flex flex-col items-center justify-center border-none" style={{ fontFamily: "DNFBitBitv2, monospace" }}>
-                      <p style={{ fontFamily: "DNFBitBitv2, monospace" }} className="text-[69px] text-white leading-[150%] border-none">{character?.ability1 || "지도력"}</p>
+                    <div
+                      className="flex-1 bg-[#0068B7] flex flex-col items-center justify-center border-none"
+                      style={{ fontFamily: "DNFBitBitv2, monospace" }}
+                    >
+                      <p
+                        style={{ fontFamily: "DNFBitBitv2, monospace" }}
+                        className="text-[69px] text-white leading-[150%] border-none"
+                      >
+                        {character?.ability1 || "지도력"}
+                      </p>
                     </div>
-                    <div className="flex-1 bg-[#BAE3F9] flex flex-col items-center justify-center border-none" style={{ fontFamily: "DNFBitBitv2, monospace" }}>
-                      <p style={{ fontFamily: "DNFBitBitv2, monospace" }} className="text-[100px] text-black leading-none border-none">{skill1Value}</p>
+                    <div
+                      className="flex-1 bg-[#BAE3F9] flex flex-col items-center justify-center border-none"
+                      style={{ fontFamily: "DNFBitBitv2, monospace" }}
+                    >
+                      <p
+                        style={{ fontFamily: "DNFBitBitv2, monospace" }}
+                        className="text-[100px] text-black leading-none border-none"
+                      >
+                        {skill1Value}
+                      </p>
                     </div>
                   </div>
                   <div className="flex-1 flex flex-col border-none">
-                    <div className="flex-1 bg-[#0068B7] flex flex-col items-center justify-center border-none" style={{ fontFamily: "DNFBitBitv2, monospace" }}>
-                      <p style={{ fontFamily: "DNFBitBitv2, monospace" }} className="text-[69px] text-white leading-[150%] border-none">{character?.ability2 || "결단력"}</p>
+                    <div
+                      className="flex-1 bg-[#0068B7] flex flex-col items-center justify-center border-none"
+                      style={{ fontFamily: "DNFBitBitv2, monospace" }}
+                    >
+                      <p
+                        style={{ fontFamily: "DNFBitBitv2, monospace" }}
+                        className="text-[69px] text-white leading-[150%] border-none"
+                      >
+                        {character?.ability2 || "결단력"}
+                      </p>
                     </div>
-                    <div className="flex-1 bg-[#BAE3F9] flex flex-col items-center justify-center border-none" style={{ fontFamily: "DNFBitBitv2, monospace" }}>
-                      <p style={{ fontFamily: "DNFBitBitv2, monospace" }} className="text-[100px] text-black leading-none border-none">{skill2Value}</p>
+                    <div
+                      className="flex-1 bg-[#BAE3F9] flex flex-col items-center justify-center border-none"
+                      style={{ fontFamily: "DNFBitBitv2, monospace" }}
+                    >
+                      <p
+                        style={{ fontFamily: "DNFBitBitv2, monospace" }}
+                        className="text-[100px] text-black leading-none border-none"
+                      >
+                        {skill2Value}
+                      </p>
                     </div>
                   </div>
                   <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 flex items-center justify-center z-10">
