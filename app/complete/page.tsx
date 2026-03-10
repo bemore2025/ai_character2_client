@@ -336,8 +336,8 @@ function CompletePageContent() {
     const startTime = Date.now();
     localStorage.setItem("isPrinting", "true");
     localStorage.setItem("printingStartTime", startTime.toString());
-    setTimeout(() => {
-      handlePrint();
+    setTimeout(async () => {
+      await handlePrint();
     }, 100);
     setTimeout(() => {
       setIsPrinting(false);
@@ -505,74 +505,159 @@ function CompletePageContent() {
     }
   };
 
-  const handlePrint = () => {
-    const printWindow = window.open("", "_blank");
-    if (!printWindow) return;
-    if (!qrCodeUrl) return;
+ const handlePrint = async () => {
+   try {
+     const backImageUrl = `${window.location.origin}/print_front.jpg`;
+     const targetElement = photoCardRef.current;
+     if (!targetElement) return;
 
-    const printContent = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>포토카드 양면 출력</title>
-        <meta charset="utf-8">
-        <style>
-          @page { size: 245px 386px; margin: 0; padding: 0; }
-          * { margin: 0; padding: 0; box-sizing: border-box; }
-          html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: white; }
-          .print-container { width: 100%; height: 100%; }
-          .print-page { width: 245px; height: 386px; margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; page-break-after: always; page-break-inside: avoid; position: relative; overflow: hidden; background: white; }
-          .print-page:last-child { page-break-after: avoid; }
-          .card-image { width: 100%; height: 100%; margin: 0; padding: 0; object-fit: cover; border: none; display: block; }
-          .card-image.back { transform: scaleX(-1) scaleY(-1); }
-          .page-info { position: absolute; top: 5px; right: 5px; font-size: 12px; color: #666; background: rgba(255,255,255,0.9); padding: 3px 8px; border-radius: 4px; z-index: 10; }
-          @media print {
-            .page-info { display: none !important; }
-            html, body { width: 100% !important; height: 100% !important; margin: 0 !important; padding: 0 !important; -webkit-print-color-adjust: exact !important; color-adjust: exact !important; }
-            .print-page { width: 245px !important; height: 386px !important; margin: 0 !important; page-break-after: always !important; }
-            .print-page:last-child { page-break-after: auto !important; }
-            .card-image { width: 100% !important; height: 100% !important; object-fit: cover !important; }
-          }
-        </style>
-      </head>
-      <body>
-        <div class="print-container">
-          <div class="print-page">
-            <div class="page-info">앞면 - Page 1</div>
-            <img src="${qrCodeUrl}" alt="포토카드 앞면" class="card-image" crossorigin="anonymous" />
-          </div>
-          <div class="print-page">
-            <div class="page-info">뒷면 - Page 2</div>
-            <img src="/print_front.jpg" alt="포토카드 뒷면" class="card-image back" crossorigin="anonymous" />
-          </div>
-        </div>
-        <script>
-          let loadedCount = 0;
-          const images = document.querySelectorAll('img');
-          const totalImages = images.length;
-          function checkAllLoaded() {
-            loadedCount++;
-            if (loadedCount === totalImages) {
-              setTimeout(() => { window.print(); }, 1000);
-            }
-          }
-          images.forEach((img, index) => {
-            if (img.complete && img.naturalHeight !== 0) { checkAllLoaded(); }
-            else {
-              img.onload = () => { checkAllLoaded(); };
-              img.onerror = () => { checkAllLoaded(); };
-            }
-          });
-          setTimeout(() => { if (loadedCount < totalImages) { window.print(); } }, 5000);
-          window.addEventListener('afterprint', () => { setTimeout(() => { window.close(); }, 1000); });
-          document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { window.close(); } });
-        </script>
-      </body>
-      </html>
-    `;
-    printWindow.document.write(printContent);
-    printWindow.document.close();
-  };
+     // 렌더링 안정화 대기
+     await new Promise((resolve) => setTimeout(resolve, 1500));
+
+     // 폰트 로딩 대기
+     if (document.fonts && document.fonts.ready) {
+       await document.fonts.ready;
+     }
+
+     // 내부 이미지 로딩 대기
+     const images = Array.from(targetElement.querySelectorAll("img"));
+     await Promise.all(
+       images.map((img) => {
+         if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+         return new Promise((resolve) => {
+           img.onload = () => resolve(true);
+           img.onerror = () => resolve(true);
+         });
+       })
+     );
+
+     const dataUrl = await domtoimage.toPng(targetElement, {
+       bgcolor: "#B9D8F0",
+       width: 1594,
+       height: 2543,
+       quality: 1.0,
+       style: {
+         transform: "scale(1)",
+         transformOrigin: "top left",
+         width: "1594px",
+         height: "2543px",
+       },
+       filter: (node) => {
+         const element = node as Element;
+         if (element.tagName === "SCRIPT" || element.tagName === "STYLE") {
+           return false;
+         }
+         return true;
+       },
+     });
+
+     const printWindow = window.open("", "_blank");
+     if (!printWindow) return;
+
+     const printContent = `
+       <!DOCTYPE html>
+       <html>
+         <head>
+           <title>포토카드 양면 출력</title>
+           <meta charset="utf-8" />
+           <style>
+             @page {
+               size: A4;
+               margin: 0;
+             }
+
+             * {
+               box-sizing: border-box;
+               margin: 0;
+               padding: 0;
+             }
+
+             html, body {
+               width: 100%;
+               height: 100%;
+               background: white;
+               -webkit-print-color-adjust: exact;
+               print-color-adjust: exact;
+             }
+
+             .page {
+               width: 210mm;
+               height: 297mm;
+               display: flex;
+               align-items: center;
+               justify-content: center;
+               page-break-after: always;
+               overflow: hidden;
+             }
+
+             .page:last-child {
+               page-break-after: auto;
+             }
+
+             .card-image {
+               width: 80mm;
+               height: 125mm;
+               object-fit: contain;
+               display: block;
+             }
+
+             .card-image.back {
+               transform: scaleX(-1) scaleY(-1);
+             }
+           </style>
+         </head>
+         <body>
+           <div class="page">
+             <img id="front-image" src="${dataUrl}" alt="포토카드 앞면" class="card-image" />
+           </div>
+           <div class="page">
+             <img id="back-image" src="${backImageUrl}" alt="포토카드 뒷면" class="card-image back" />
+           </div>
+
+           <script>
+             const front = document.getElementById("front-image");
+             const back = document.getElementById("back-image");
+
+             let loaded = 0;
+             const done = () => {
+               loaded += 1;
+               if (loaded === 2) {
+                 setTimeout(() => window.print(), 500);
+               }
+             };
+
+             if (front.complete) done();
+             else {
+               front.onload = done;
+               front.onerror = done;
+             }
+
+             if (back.complete) done();
+             else {
+               back.onload = done;
+               back.onerror = done;
+             }
+
+             window.onafterprint = () => {
+               setTimeout(() => window.close(), 300);
+             };
+           </script>
+         </body>
+       </html>
+     `;
+
+     printWindow.document.open();
+     printWindow.document.write(printContent);
+     printWindow.document.close();
+   } catch (error) {
+     console.error("출력 오류:", error);
+     toast({
+       title: "출력 오류",
+       description: "포토카드 출력 중 오류가 발생했습니다.",
+       variant: "destructive",
+     });
+   }
+ };
 
   const formatRoleText = (role: string) => {
     if (!role) return "";
