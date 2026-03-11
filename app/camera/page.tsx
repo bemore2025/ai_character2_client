@@ -57,7 +57,6 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
   const flashSoundRef = useRef<HTMLAudioElement | null>(null);
   const videoElementRef = useRef<HTMLVideoElement | null>(null);
 
-  // 컴포넌트 마운트 시 오디오 객체 생성
   useEffect(() => {
     flashSoundRef.current = new Audio("/flash.wav");
     flashSoundRef.current.load();
@@ -72,6 +71,26 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
 
   const handleVideoRef = useCallback((ref: HTMLVideoElement | null) => {
     videoElementRef.current = ref;
+  }, []);
+
+  const normalizeImageSrc = useCallback((value: string) => {
+    if (!value) return "";
+
+    const trimmed = value.trim();
+
+    if (
+      trimmed.startsWith("http://") ||
+      trimmed.startsWith("https://") ||
+      trimmed.startsWith("blob:")
+    ) {
+      return trimmed;
+    }
+
+    if (trimmed.startsWith("data:image/")) {
+      return trimmed;
+    }
+
+    return `data:image/png;base64,${trimmed}`;
   }, []);
 
   const uploadPhotoToSupabase = async (photoBlob: Blob, fileName: string) => {
@@ -109,7 +128,6 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
       setShowLottieLoader(true);
       setProcessingMessage("이미지 저장 중...");
 
-      // 1. image 테이블에 job_id와 picture_camera 저장
       const saveResult = await saveImageRecord(uploadedPhotoUrl);
 
       if (!saveResult.success || !saveResult.jobId) {
@@ -122,13 +140,12 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
 
       setProcessingMessage("이미지 생성 중...");
 
-      // 2. AWS API에 이미지 처리 요청 전송 (초기 생성이므로 regenerationCount = 2)
       const awsResult = await requestImageProcessing(
         uploadedPhotoUrl,
         characterId,
-        situation || "변신", // situation이 없으면 기본값 사용
+        situation || "변신",
         saveResult.jobId,
-        2 // 초기 생성
+        2
       );
 
       if (!awsResult.success) {
@@ -141,13 +158,11 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
 
       setProcessingMessage("결과 대기 중...");
 
-      // 3. result 값이 들어올 때까지 polling
       const pollingResult = await pollForImageResult(saveResult.jobId, {
-        maxAttempts: 60, // 5분 대기
-        intervalMs: 5000, // 5초마다 체크
-        onProgress: (attempt, maxAttempts) => {
-          const remainingTime = Math.ceil(((maxAttempts - attempt) * 5) / 60);
-          setProcessingMessage(`결과 대기 중... `);
+        maxAttempts: 60,
+        intervalMs: 5000,
+        onProgress: () => {
+          setProcessingMessage("결과 대기 중... ");
         },
       });
 
@@ -159,44 +174,55 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
       });
 
       if (pollingResult.success && pollingResult.data?.result) {
-        // 3. API 응답 데이터에서 background_removed_image_url 추출
         const resultData = pollingResult.data.result;
 
         console.log("[Camera] Processing result data:", {
           resultDataType: typeof resultData,
-          resultData: resultData,
+          resultData,
         });
 
         try {
-          // background_removed_image_url 추출
           let backgroundImageUrl = "";
 
-          // result가 문자열(URL)인 경우 직접 사용
           if (typeof resultData === "string") {
-            backgroundImageUrl = resultData;
-          } else if (resultData.background_removed_image_url) {
-            backgroundImageUrl = resultData.background_removed_image_url;
-          } else if (resultData.result_image_url) {
-            // 대안으로 result_image_url 사용
-            backgroundImageUrl = resultData.result_image_url;
+            backgroundImageUrl = normalizeImageSrc(resultData);
+          } else if (
+            resultData &&
+            typeof resultData === "object" &&
+            "background_removed_image_url" in resultData &&
+            resultData.background_removed_image_url
+          ) {
+            backgroundImageUrl = normalizeImageSrc(
+              String(resultData.background_removed_image_url)
+            );
+          } else if (
+            resultData &&
+            typeof resultData === "object" &&
+            "result_image_url" in resultData &&
+            resultData.result_image_url
+          ) {
+            backgroundImageUrl = normalizeImageSrc(
+              String(resultData.result_image_url)
+            );
           }
 
           console.log(
-            "[Camera] Extracted background_removed_image_url:",
-            backgroundImageUrl
+            "[Camera] Final image src preview:",
+            backgroundImageUrl.slice(0, 80)
           );
 
           if (backgroundImageUrl) {
             console.log(
               "[Camera] Navigating to complete page with background image URL..."
             );
-            // Zustand store에 이미지 정보 저장
+
             setImageData({
-              characterId: characterId,
+              characterId,
               situation: situation || "변신",
               backgroundRemovedImageUrl: backgroundImageUrl,
               jobId: saveResult.jobId,
             });
+
             router.push(
               `/complete?character=${characterId}&backgroundImage=${encodeURIComponent(
                 backgroundImageUrl
@@ -238,7 +264,6 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
       return;
     }
 
-    // 비디오가 재생 중인지 확인
     if (videoElementRef.current.readyState < 2) {
       toast("카메라가 준비되지 않았습니다", {
         description: "잠시 후 다시 시도해주세요.",
@@ -249,23 +274,15 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
     try {
       setIsUploading(true);
 
-      // 사진 캡처
       const photoBlob = await capturePhotoFromVideo(videoElementRef.current);
-
-      // 미리보기용 Data URL 생성
       const photoDataURL = await blobToDataURL(photoBlob);
       setCapturedPhoto(photoDataURL);
 
-      // 파일명 생성
       const fileName = generatePhotoFileName();
-
-      // Supabase에 업로드
       const uploadResult = await uploadPhotoToSupabase(photoBlob, fileName);
 
       if (uploadResult && uploadResult.publicUrl) {
         setIsUploading(false);
-
-        // 얼굴 스왑 처리 시작
         await processWithFaceSwap(uploadResult.publicUrl);
       } else {
         toast("사진 업로드 실패", {
@@ -279,47 +296,39 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
       });
       setIsUploading(false);
     }
-  }, [characterId, situation]);
+  }, [characterId, situation, processWithFaceSwap]);
 
   const handleTransform = useCallback(() => {
     playSound();
 
-    // 플래시 음향 재생
     if (flashSoundRef.current) {
       flashSoundRef.current.currentTime = 0;
       const playPromise = flashSoundRef.current.play();
 
       if (playPromise !== undefined) {
-        playPromise
-          .then(() => {
-            // 오디오 재생 성공
-          })
-          .catch(() => {
-            toast("오디오 재생 실패", {
-              description: "오디오 파일을 재생할 수 없습니다",
-              action: {
-                label: "확인",
-                onClick: () => {},
-              },
-            });
+        playPromise.catch(() => {
+          toast("오디오 재생 실패", {
+            description: "오디오 파일을 재생할 수 없습니다",
+            action: {
+              label: "확인",
+              onClick: () => {},
+            },
           });
+        });
       }
     }
 
-    // 300ms 후에 카운트다운 시작
     setTimeout(() => {
       setIsCountingDown(true);
     }, 300);
   }, [playSound]);
 
   const handleCountdownComplete = useCallback(() => {
-    // 카운트다운 완료 후 바로 사진을 캡처하고 플래시 효과 시작
     captureAndUploadPhoto();
 
     setShowWhiteCircle(true);
     setIsCountingDown(false);
 
-    // 플래시 효과 종료
     setTimeout(() => {
       setShowWhiteCircle(false);
     }, 300);
@@ -346,14 +355,12 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
       </div>
 
       <div className="absolute top-[949px] w-[1225px] aspect-square animate-fade-in-delay rounded-full overflow-hidden">
-        {/* 웹캠 컴포넌트 - 항상 렌더링 */}
         {!showLottieLoader && (
           <div className="absolute inset-0 flex items-center justify-center z-20 rounded-full overflow-hidden">
             <WebcamComponent onVideoRef={handleVideoRef} />
           </div>
         )}
 
-        {/* 촬영된 사진 미리보기 */}
         {capturedPhoto && !showLottieLoader && (
           <div className="absolute inset-0 z-40 rounded-full overflow-hidden">
             <Image
@@ -365,12 +372,10 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
           </div>
         )}
 
-        {/* 하얀 원 (플래시 효과) - 오버레이로 구현 */}
         {showWhiteCircle && !capturedPhoto && !showLottieLoader && (
           <div className="absolute inset-0 bg-white/80 rounded-full z-35 animate-flash"></div>
         )}
 
-        {/* Lottie 로딩 애니메이션 */}
         {showLottieLoader && (
           <div className="absolute inset-0 z-50 rounded-full overflow-hidden flex items-center justify-center">
             <div className="w-full h-full">
@@ -384,7 +389,6 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
           </div>
         )}
 
-        {/* 카운트다운 */}
         {!showWhiteCircle && !showLottieLoader && (
           <CountdownOverlay
             isCountingDown={isCountingDown}
@@ -392,17 +396,14 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
           />
         )}
 
-        {/* 처리 상태 표시 */}
         <ProcessingStatus
           isUploading={isUploading}
           showLottieLoader={showLottieLoader}
           processingMessage={processingMessage}
         />
 
-        {/* 카메라 모서리 꺾쇠 */}
         <CameraCorners />
 
-        {/* 오버랩 이미지 */}
         {!showLottieLoader && (
           <div className="absolute inset-0 z-35 pointer-events-none scale-110 mt-[100px]">
             <Image
