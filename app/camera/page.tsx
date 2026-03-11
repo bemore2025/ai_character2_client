@@ -13,7 +13,6 @@ import {
   generatePhotoFileName,
   blobToDataURL,
 } from "@/utils/camera";
-import { requestFaceSwap, pollJobStatus } from "@/utils/faceSwap";
 import {
   saveImageRecord,
   pollForImageResult,
@@ -22,7 +21,6 @@ import {
 import { WebcamComponent } from "./components/WebcamComponent";
 import { CameraCorners } from "./components/CameraCorners";
 import { ProcessingStatus } from "./components/ProcessingStatus";
-import { FaceGuide } from "./components/FaceGuide";
 import { CountdownOverlay } from "./components/CountdownOverlay";
 import { PageProps, CameraPageContentProps, CameraClientProps } from "./types";
 import { useImageStore } from "@/app/store/useImageStore";
@@ -50,8 +48,7 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [showLottieLoader, setShowLottieLoader] = useState(false);
-  const [processingMessage, setProcessingMessage] =
-    useState("이미지 생성중...");
+  const [processingMessage, setProcessingMessage] = useState("이미지 생성중...");
   const { playSound } = useButtonSound();
   const { setImageData } = useImageStore();
   const flashSoundRef = useRef<HTMLAudioElement | null>(null);
@@ -112,76 +109,72 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
 
       return result;
     } catch (error) {
+      console.error("[Camera] uploadPhotoToSupabase error:", error);
       return null;
     }
   };
 
-  const processWithFaceSwap = async (uploadedPhotoUrl: string) => {
-    if (!characterId) {
-      toast("캐릭터 정보가 없습니다", {
-        description: "캐릭터를 선택해주세요.",
-      });
-      return;
-    }
-
-    try {
-      setShowLottieLoader(true);
-      setProcessingMessage("이미지 저장 중...");
-
-      const saveResult = await saveImageRecord(uploadedPhotoUrl);
-
-      if (!saveResult.success || !saveResult.jobId) {
-        toast("이미지 저장 실패", {
-          description: saveResult.error || "이미지 저장에 실패했습니다.",
+  const processWithFaceSwap = useCallback(
+    async (uploadedPhotoUrl: string) => {
+      if (!characterId) {
+        toast("캐릭터 정보가 없습니다", {
+          description: "캐릭터를 선택해주세요.",
         });
-        setShowLottieLoader(false);
         return;
       }
 
-      setProcessingMessage("이미지 생성 중...");
+      try {
+        setShowLottieLoader(true);
+        setProcessingMessage("이미지 저장 중...");
 
-      const awsResult = await requestImageProcessing(
-        uploadedPhotoUrl,
-        characterId,
-        situation || "변신",
-        saveResult.jobId,
-        2
-      );
+        const saveResult = await saveImageRecord(uploadedPhotoUrl);
 
-      if (!awsResult.success) {
-        toast("AWS API 요청 실패", {
-          description: awsResult.error || "이미지 처리 요청에 실패했습니다.",
+        if (!saveResult.success || !saveResult.jobId) {
+          toast("이미지 저장 실패", {
+            description: saveResult.error || "이미지 저장에 실패했습니다.",
+          });
+          setShowLottieLoader(false);
+          return;
+        }
+
+        setProcessingMessage("이미지 생성 중...");
+
+        const awsResult = await requestImageProcessing(
+          uploadedPhotoUrl,
+          characterId,
+          situation || "변신",
+          saveResult.jobId,
+          2
+        );
+
+        if (!awsResult.success) {
+          toast("AWS API 요청 실패", {
+            description: awsResult.error || "이미지 처리 요청에 실패했습니다.",
+          });
+          setShowLottieLoader(false);
+          return;
+        }
+
+        setProcessingMessage("결과 대기 중...");
+
+        const pollingResult = await pollForImageResult(saveResult.jobId, {
+          maxAttempts: 60,
+          intervalMs: 5000,
+          onProgress: () => {
+            setProcessingMessage("결과 대기 중...");
+          },
         });
-        setShowLottieLoader(false);
-        return;
-      }
 
-      setProcessingMessage("결과 대기 중...");
-
-      const pollingResult = await pollForImageResult(saveResult.jobId, {
-        maxAttempts: 60,
-        intervalMs: 5000,
-        onProgress: () => {
-          setProcessingMessage("결과 대기 중... ");
-        },
-      });
-
-      console.log("[Camera] Polling completed:", {
-        success: pollingResult.success,
-        hasData: !!pollingResult.data,
-        hasResult: !!pollingResult.data?.result,
-        result: pollingResult.data?.result,
-      });
-
-      if (pollingResult.success && pollingResult.data?.result) {
-        const resultData = pollingResult.data.result;
-
-        console.log("[Camera] Processing result data:", {
-          resultDataType: typeof resultData,
-          resultData,
+        console.log("[Camera] Polling completed:", {
+          success: pollingResult.success,
+          hasData: !!pollingResult.data,
+          hasResult: !!pollingResult.data?.result,
+          result: pollingResult.data?.result,
         });
 
-        try {
+        if (pollingResult.success && pollingResult.data?.result) {
+          const resultData = pollingResult.data.result;
+
           let backgroundImageUrl = "";
 
           if (typeof resultData === "string") {
@@ -208,14 +201,10 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
 
           console.log(
             "[Camera] Final image src preview:",
-            backgroundImageUrl.slice(0, 80)
+            backgroundImageUrl?.slice(0, 80)
           );
 
           if (backgroundImageUrl) {
-            console.log(
-              "[Camera] Navigating to complete page with background image URL..."
-            );
-
             setImageData({
               characterId,
               situation: situation || "변신",
@@ -223,46 +212,37 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
               jobId: saveResult.jobId,
             });
 
-            router.push(
-              `/complete?character=${characterId}&backgroundImage=${encodeURIComponent(
-                backgroundImageUrl
-              )}&jobId=${saveResult.jobId}`
-            );
+            // 중요: 긴 base64를 query string으로 넘기지 않음
+            router.push(`/complete?character=${characterId}&jobId=${saveResult.jobId}`);
           } else {
             toast("이미지 URL을 찾을 수 없습니다", {
               description: "생성된 이미지 URL을 찾을 수 없습니다.",
             });
             setShowLottieLoader(false);
           }
-        } catch (error) {
-          console.log("[Camera] Failed to process result data:", error);
-          toast("결과 데이터 처리 실패", {
-            description: "결과 데이터를 처리하는데 실패했습니다.",
+        } else {
+          console.log("[Camera] Polling failed:", pollingResult.error);
+          toast("이미지 생성 실패", {
+            description: pollingResult.error || "이미지 생성에 실패했습니다.",
           });
           setShowLottieLoader(false);
         }
-      } else {
-        console.log("[Camera] Polling failed:", pollingResult.error);
-        toast("이미지 생성 실패", {
-          description: pollingResult.error || "이미지 생성에 실패했습니다.",
+      } catch (error) {
+        console.error("[Camera] processWithFaceSwap error:", error);
+        toast("처리 중 오류 발생", {
+          description:
+            error instanceof Error
+              ? error.message
+              : "알 수 없는 오류가 발생했습니다.",
         });
         setShowLottieLoader(false);
       }
-    } catch (error) {
-      toast("처리 중 오류 발생", {
-        description:
-          error instanceof Error
-            ? error.message
-            : "알 수 없는 오류가 발생했습니다.",
-      });
-      setShowLottieLoader(false);
-    }
-  };
+    },
+    [characterId, situation, normalizeImageSrc, router, setImageData]
+  );
 
   const captureAndUploadPhoto = useCallback(async () => {
-    if (!videoElementRef.current) {
-      return;
-    }
+    if (!videoElementRef.current) return;
 
     if (videoElementRef.current.readyState < 2) {
       toast("카메라가 준비되지 않았습니다", {
@@ -291,12 +271,13 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
         setIsUploading(false);
       }
     } catch (error) {
+      console.error("[Camera] captureAndUploadPhoto error:", error);
       toast("사진 촬영 실패", {
         description: "사진 촬영 중 오류가 발생했습니다.",
       });
       setIsUploading(false);
     }
-  }, [characterId, situation, processWithFaceSwap]);
+  }, [processWithFaceSwap]);
 
   const handleTransform = useCallback(() => {
     playSound();
