@@ -10,7 +10,10 @@ import { toast } from "@/components/ui/use-toast";
 import { MessageResponse, Character, CharacterResponse } from "./types";
 import { IoMdRefresh } from "react-icons/io";
 import { useImageStore } from "@/app/store/useImageStore";
-import { saveImageRecord, pollForImageResult, requestImageProcessing } from "@/utils/imagePolling";
+import {
+  pollForImageResult,
+  requestImageProcessing,
+} from "@/utils/imagePolling";
 import Lottie from "lottie-react";
 import loaderAnimation from "@/public/loader.json";
 
@@ -51,9 +54,30 @@ function CompletePageContent() {
   const imageParam = searchParams.get("image");
   const resultImageParam = searchParams.get("resultImage");
   const backgroundImageParam = searchParams.get("backgroundImage");
-  const [backgroundRemovedImageUrl, setBackgroundRemovedImageUrl] = useState<string>("");
+  const [backgroundRemovedImageUrl, setBackgroundRemovedImageUrl] =
+    useState<string>("");
   const photoCardRef = useRef<HTMLDivElement>(null);
   const fullScreenRef = useRef<HTMLDivElement>(null);
+
+  const normalizeImageSrc = useCallback((value: string) => {
+    if (!value) return "";
+
+    const trimmed = value.trim();
+
+    if (
+      trimmed.startsWith("http://") ||
+      trimmed.startsWith("https://") ||
+      trimmed.startsWith("blob:")
+    ) {
+      return trimmed;
+    }
+
+    if (trimmed.startsWith("data:image/")) {
+      return trimmed;
+    }
+
+    return `data:image/png;base64,${trimmed}`;
+  }, []);
 
   const fetchRandomMessage = async () => {
     try {
@@ -75,14 +99,20 @@ function CompletePageContent() {
         setCharacter(data.character);
         if (data.character.ability1_min && data.character.ability1_max) {
           const randomSkill1 = Math.floor(
-            Math.random() * (data.character.ability1_max - data.character.ability1_min + 1) +
+            Math.random() *
+              (data.character.ability1_max -
+                data.character.ability1_min +
+                1) +
               data.character.ability1_min
           );
           setSkill1Value(randomSkill1);
         }
         if (data.character.ability2_min && data.character.ability2_max) {
           const randomSkill2 = Math.floor(
-            Math.random() * (data.character.ability2_max - data.character.ability2_min + 1) +
+            Math.random() *
+              (data.character.ability2_max -
+                data.character.ability2_min +
+                1) +
               data.character.ability2_min
           );
           setSkill2Value(randomSkill2);
@@ -142,11 +172,13 @@ function CompletePageContent() {
   useEffect(() => {
     if (characterId) {
       fetchCharacter(characterId);
+    } else if (storedCharacterId) {
+      fetchCharacter(storedCharacterId);
     } else {
       setSkill1Value(Math.floor(Math.random() * 201 + 100));
       setSkill2Value(Math.floor(Math.random() * 201 + 100));
     }
-  }, [characterId]);
+  }, [characterId, storedCharacterId]);
 
   useEffect(() => {
     fetchRandomMessage();
@@ -155,41 +187,83 @@ function CompletePageContent() {
   useEffect(() => {
     if (backgroundImageParam) {
       const decodedUrl = decodeURIComponent(backgroundImageParam);
-      addDebugInfo(`background_removed_image_url 직접 사용: ${decodedUrl}`);
-      setBackgroundRemovedImageUrl(decodedUrl);
-    } else if (resultImageParam) {
+      const normalized = normalizeImageSrc(decodedUrl);
+      addDebugInfo(`backgroundImageParam 사용: ${normalized.slice(0, 80)}...`);
+      setBackgroundRemovedImageUrl(normalized);
+      return;
+    }
+
+    if (storedImageUrl) {
+      const normalized = normalizeImageSrc(storedImageUrl);
+      addDebugInfo(`store 이미지 사용: ${normalized.slice(0, 80)}...`);
+      setBackgroundRemovedImageUrl(normalized);
+      return;
+    }
+
+    if (resultImageParam) {
       try {
         const apiResponse = JSON.parse(decodeURIComponent(resultImageParam));
-        let backgroundImageUrl = "";
-        if (apiResponse.result && apiResponse.result.background_removed_image_url) {
-          backgroundImageUrl = apiResponse.result.background_removed_image_url;
+        let imageSrc = "";
+
+        if (typeof apiResponse === "string") {
+          imageSrc = apiResponse;
+        } else if (apiResponse.result?.background_removed_image_url) {
+          imageSrc = apiResponse.result.background_removed_image_url;
         } else if (apiResponse.background_removed_image_url) {
-          backgroundImageUrl = apiResponse.background_removed_image_url;
+          imageSrc = apiResponse.background_removed_image_url;
+        } else if (apiResponse.result?.result_image_url) {
+          imageSrc = apiResponse.result.result_image_url;
+        } else if (apiResponse.result_image_url) {
+          imageSrc = apiResponse.result_image_url;
         }
-        if (backgroundImageUrl) {
-          setBackgroundRemovedImageUrl(backgroundImageUrl);
-        } else {
-          if (apiResponse.result && apiResponse.result.result_image_url) {
-            setBackgroundRemovedImageUrl(apiResponse.result.result_image_url);
-          } else if (apiResponse.result_image_url) {
-            setBackgroundRemovedImageUrl(apiResponse.result_image_url);
-          }
+
+        if (imageSrc) {
+          const normalized = normalizeImageSrc(imageSrc);
+          addDebugInfo(`resultImageParam 사용: ${normalized.slice(0, 80)}...`);
+          setBackgroundRemovedImageUrl(normalized);
         }
       } catch (error) {
-        setBackgroundRemovedImageUrl(resultImageParam || "");
+        const normalized = normalizeImageSrc(resultImageParam);
+        addDebugInfo(
+          `resultImageParam 문자열 직접 사용: ${normalized.slice(0, 80)}...`
+        );
+        setBackgroundRemovedImageUrl(normalized);
       }
     }
-  }, [backgroundImageParam, resultImageParam, addDebugInfo]);
+  }, [
+    backgroundImageParam,
+    resultImageParam,
+    storedImageUrl,
+    addDebugInfo,
+    normalizeImageSrc,
+  ]);
+
+  useEffect(() => {
+    console.log(
+      "[Complete] storedImageUrl:",
+      storedImageUrl?.slice?.(0, 80)
+    );
+    console.log(
+      "[Complete] final backgroundRemovedImageUrl:",
+      backgroundRemovedImageUrl?.slice?.(0, 80)
+    );
+  }, [storedImageUrl, backgroundRemovedImageUrl]);
 
   useEffect(() => {
     if (imageParam) {
       addDebugInfo(`이미지 파라미터 감지: ${imageParam}`);
       setQrCodeUrl(imageParam);
       setShowQrInCard(true);
-    } else if (backgroundImageParam || resultImageParam) {
+    } else if (backgroundImageParam || resultImageParam || storedImageUrl) {
       setShowQrInCard(true);
     }
-  }, [imageParam, backgroundImageParam, resultImageParam]);
+  }, [
+    imageParam,
+    backgroundImageParam,
+    resultImageParam,
+    storedImageUrl,
+    addDebugInfo,
+  ]);
 
   useEffect(() => {
     const autoStart = async () => {
@@ -207,7 +281,7 @@ function CompletePageContent() {
     if (photoCardRef.current && !isImageUploadComplete && !imageParam) {
       autoStart();
     }
-  }, [isImageUploadComplete, imageParam]);
+  }, [isImageUploadComplete, imageParam, addDebugInfo]);
 
   const captureAndUploadImage = useCallback(async () => {
     try {
@@ -221,7 +295,7 @@ function CompletePageContent() {
       }
 
       addDebugInfo("Canvas 변환 시작");
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise((resolve) => setTimeout(resolve, 500));
       const dataUrl = await domtoimage.toJpeg(targetElement, {
         bgcolor: "#B9D8F0",
         width: targetElement.offsetWidth,
@@ -231,8 +305,8 @@ function CompletePageContent() {
 
       addDebugInfo("이미지 변환 완료, Supabase 업로드 준비");
 
-      const byteString = atob(dataUrl.split(',')[1]);
-      const mimeString = dataUrl.split(',')[0].split(':')[1].split(';')[0];
+      const byteString = atob(dataUrl.split(",")[1]);
+      const mimeString = dataUrl.split(",")[0].split(":")[1].split(";")[0];
 
       const ab = new ArrayBuffer(byteString.length);
       const ia = new Uint8Array(ab);
@@ -260,12 +334,16 @@ function CompletePageContent() {
             body: formData,
           });
 
-          addDebugInfo(`업로드 시도 ${retryCount + 1}: 응답 상태 ${uploadResponse.status}`);
+          addDebugInfo(
+            `업로드 시도 ${retryCount + 1}: 응답 상태 ${uploadResponse.status}`
+          );
 
           uploadResult = await uploadResponse.json();
 
           if (uploadResult.success && uploadResult.url) {
-            addDebugInfo(`Supabase 업로드 성공: ${uploadResult.url.substring(0, 60)}...`);
+            addDebugInfo(
+              `Supabase 업로드 성공: ${uploadResult.url.substring(0, 60)}...`
+            );
 
             setQrCodeUrl(uploadResult.url);
             setShowQrInCard(true);
@@ -278,19 +356,25 @@ function CompletePageContent() {
             addDebugInfo("QR 코드 렌더링 대기 중");
             return;
           } else {
-            addDebugInfo(`업로드 실패 (시도 ${retryCount + 1}): ${uploadResult.error}`);
+            addDebugInfo(
+              `업로드 실패 (시도 ${retryCount + 1}): ${uploadResult.error}`
+            );
             break;
           }
         } catch (networkError) {
           retryCount++;
           addDebugInfo(
             `업로드 네트워크 에러 (시도 ${retryCount}): ${
-              networkError instanceof Error ? networkError.message : "Unknown error"
+              networkError instanceof Error
+                ? networkError.message
+                : "Unknown error"
             }`
           );
           if (retryCount < maxRetries) {
             addDebugInfo(`${2000 * retryCount}ms 후 재시도...`);
-            await new Promise((resolve) => setTimeout(resolve, 2000 * retryCount));
+            await new Promise((resolve) =>
+              setTimeout(resolve, 2000 * retryCount)
+            );
           }
         }
       }
@@ -316,7 +400,7 @@ function CompletePageContent() {
     if (qrCodeUrl) {
       addDebugInfo("QR URL 이미 설정됨, 추가 캡처 스킵");
     }
-  }, [qrCodeUrl]);
+  }, [qrCodeUrl, isImageUploadComplete, addDebugInfo]);
 
   const handleQrReady = () => {
     addDebugInfo("QR 코드 렌더링 완료");
@@ -328,7 +412,7 @@ function CompletePageContent() {
       setIsQrReady(false);
       addDebugInfo(`QR 코드 URL 설정: ${qrCodeUrl.substring(0, 50)}...`);
     }
-  }, [qrCodeUrl]);
+  }, [qrCodeUrl, addDebugInfo]);
 
   const handleTransform = () => {
     playSound();
@@ -356,19 +440,32 @@ function CompletePageContent() {
   const handleRegenerate = async () => {
     playSound();
     if (!storedCharacterId || !storedImageUrl || !storedJobId) {
-      toast({ title: "재생성 불가", description: "저장된 이미지 정보가 없습니다." });
+      toast({
+        title: "재생성 불가",
+        description: "저장된 이미지 정보가 없습니다.",
+      });
       return;
     }
-    const currentCount = parseInt(localStorage.getItem("regenerateCount") || "0");
+    const currentCount = parseInt(
+      localStorage.getItem("regenerateCount") || "0"
+    );
     if (currentCount <= 0) {
-      toast({ title: "재생성 불가", description: "재생성 횟수를 모두 사용했습니다." });
+      toast({
+        title: "재생성 불가",
+        description: "재생성 횟수를 모두 사용했습니다.",
+      });
       return;
     }
 
     setIsRegenerating(true);
     try {
-      const currentRegenerationCount = parseInt(localStorage.getItem("regenerateCount") || "2");
-      const nextRegenerationCount = Math.max(0, currentRegenerationCount - 1);
+      const currentRegenerationCount = parseInt(
+        localStorage.getItem("regenerateCount") || "2"
+      );
+      const nextRegenerationCount = Math.max(
+        0,
+        currentRegenerationCount - 1
+      );
 
       const awsResult = await requestImageProcessing(
         storedImageUrl,
@@ -398,12 +495,16 @@ function CompletePageContent() {
         let backgroundImageUrl = "";
 
         if (typeof resultData === "string") {
-          backgroundImageUrl = resultData;
+          backgroundImageUrl = normalizeImageSrc(resultData);
         } else if (typeof resultData === "object" && resultData !== null) {
           if (resultData.background_removed_image_url) {
-            backgroundImageUrl = resultData.background_removed_image_url;
+            backgroundImageUrl = normalizeImageSrc(
+              resultData.background_removed_image_url
+            );
           } else if (resultData.result_image_url) {
-            backgroundImageUrl = resultData.result_image_url;
+            backgroundImageUrl = normalizeImageSrc(
+              resultData.result_image_url
+            );
           }
         }
 
@@ -418,7 +519,10 @@ function CompletePageContent() {
 
           setTimeout(async () => {
             await captureAndUploadImage();
-            toast({ title: "재생성 완료", description: "새로운 이미지가 생성되었습니다." });
+            toast({
+              title: "재생성 완료",
+              description: "새로운 이미지가 생성되었습니다.",
+            });
           }, 100);
         } else {
           toast({
@@ -427,12 +531,18 @@ function CompletePageContent() {
           });
         }
       } else {
-        toast({ title: "이미지 생성 실패", description: "이미지 생성에 실패했습니다." });
+        toast({
+          title: "이미지 생성 실패",
+          description: "이미지 생성에 실패했습니다.",
+        });
       }
     } catch (error) {
       toast({
         title: "오류 발생",
-        description: error instanceof Error ? error.message : "알 수 없는 오류가 발생했습니다.",
+        description:
+          error instanceof Error
+            ? error.message
+            : "알 수 없는 오류가 발생했습니다.",
       });
     } finally {
       setIsRegenerating(false);
@@ -478,24 +588,28 @@ function CompletePageContent() {
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
       const dataUrl = await domtoimage.toJpeg(targetElement, {
-       bgcolor: "#B9D8F0",
-       width: targetElement.offsetWidth,
-       height: targetElement.offsetHeight,
-       quality: 0.92,
-       filter: (node) => {
-      const element = node as Element;
-      if (element.tagName === "SCRIPT" || element.tagName === "STYLE") return false;
-      return true;
-    },
-  });
-      
+        bgcolor: "#B9D8F0",
+        width: targetElement.offsetWidth,
+        height: targetElement.offsetHeight,
+        quality: 0.92,
+        filter: (node) => {
+          const element = node as Element;
+          if (element.tagName === "SCRIPT" || element.tagName === "STYLE")
+            return false;
+          return true;
+        },
+      });
+
       const link = document.createElement("a");
       link.download = `포토카드_${character?.role || "character"}_${Date.now()}.jpg`;
       link.href = dataUrl;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      toast({ title: "다운로드 완료", description: "포토카드 이미지가 다운로드되었습니다." });
+      toast({
+        title: "다운로드 완료",
+        description: "포토카드 이미지가 다운로드되었습니다.",
+      });
     } catch (error) {
       toast({
         title: "오류",
@@ -505,56 +619,53 @@ function CompletePageContent() {
     }
   };
 
- const handlePrint = async () => {
-   try {
-     const backImageUrl = `${window.location.origin}/print_front.jpg`;
-     const targetElement = photoCardRef.current;
-     if (!targetElement) return;
+  const handlePrint = async () => {
+    try {
+      const backImageUrl = `${window.location.origin}/print_front.jpg`;
+      const targetElement = photoCardRef.current;
+      if (!targetElement) return;
 
-     // 렌더링 안정화 대기
-     await new Promise((resolve) => setTimeout(resolve, 1500));
+      await new Promise((resolve) => setTimeout(resolve, 1500));
 
-     // 폰트 로딩 대기
-     if (document.fonts && document.fonts.ready) {
-       await document.fonts.ready;
-     }
+      if (document.fonts && document.fonts.ready) {
+        await document.fonts.ready;
+      }
 
-     // 내부 이미지 로딩 대기
-     const images = Array.from(targetElement.querySelectorAll("img"));
-     await Promise.all(
-       images.map((img) => {
-         if (img.complete && img.naturalWidth > 0) return Promise.resolve();
-         return new Promise((resolve) => {
-           img.onload = () => resolve(true);
-           img.onerror = () => resolve(true);
-         });
-       })
-     );
+      const images = Array.from(targetElement.querySelectorAll("img"));
+      await Promise.all(
+        images.map((img) => {
+          if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+          return new Promise((resolve) => {
+            img.onload = () => resolve(true);
+            img.onerror = () => resolve(true);
+          });
+        })
+      );
 
-     const dataUrl = await domtoimage.toPng(targetElement, {
-       bgcolor: "#B9D8F0",
-       width: 1594,
-       height: 2543,
-       quality: 1.0,
-       style: {
-         transform: "scale(1)",
-         transformOrigin: "top left",
-         width: "1594px",
-         height: "2543px",
-       },
-       filter: (node) => {
-         const element = node as Element;
-         if (element.tagName === "SCRIPT" || element.tagName === "STYLE") {
-           return false;
-         }
-         return true;
-       },
-     });
+      const dataUrl = await domtoimage.toPng(targetElement, {
+        bgcolor: "#B9D8F0",
+        width: 1594,
+        height: 2543,
+        quality: 1.0,
+        style: {
+          transform: "scale(1)",
+          transformOrigin: "top left",
+          width: "1594px",
+          height: "2543px",
+        },
+        filter: (node) => {
+          const element = node as Element;
+          if (element.tagName === "SCRIPT" || element.tagName === "STYLE") {
+            return false;
+          }
+          return true;
+        },
+      });
 
-     const printWindow = window.open("", "_blank");
-     if (!printWindow) return;
+      const printWindow = window.open("", "_blank");
+      if (!printWindow) return;
 
-     const printContent = `
+      const printContent = `
        <!DOCTYPE html>
        <html>
          <head>
@@ -646,18 +757,18 @@ function CompletePageContent() {
        </html>
      `;
 
-     printWindow.document.open();
-     printWindow.document.write(printContent);
-     printWindow.document.close();
-   } catch (error) {
-     console.error("출력 오류:", error);
-     toast({
-       title: "출력 오류",
-       description: "포토카드 출력 중 오류가 발생했습니다.",
-       variant: "destructive",
-     });
-   }
- };
+      printWindow.document.open();
+      printWindow.document.write(printContent);
+      printWindow.document.close();
+    } catch (error) {
+      console.error("출력 오류:", error);
+      toast({
+        title: "출력 오류",
+        description: "포토카드 출력 중 오류가 발생했습니다.",
+        variant: "destructive",
+      });
+    }
+  };
 
   const formatRoleText = (role: string) => {
     if (!role) return "";
@@ -671,7 +782,14 @@ function CompletePageContent() {
       ref={fullScreenRef}
       className="w-full h-screen relative flex flex-col items-center justify-between"
     >
-      <Image src="/bg2.webp" alt="background" fill className="object-cover z-0" priority unoptimized />
+      <Image
+        src="/bg2.webp"
+        alt="background"
+        fill
+        className="object-cover z-0"
+        priority
+        unoptimized
+      />
       <div className="flex flex-col items-center justify-center z-30 mt-[300px]">
         <div
           className="text-[190px] font-bold text-center text-[#481F0E]"
@@ -683,7 +801,11 @@ function CompletePageContent() {
 
       {isRegenerating ? (
         <div className="absolute top-[582px] w-[1594px] h-[2543px] z-20 flex items-center justify-center">
-          <Lottie animationData={loaderAnimation} loop={true} style={{ width: 800, height: 800 }} />
+          <Lottie
+            animationData={loaderAnimation}
+            loop={true}
+            style={{ width: 800, height: 800 }}
+          />
         </div>
       ) : (
         <div
@@ -785,12 +907,12 @@ function CompletePageContent() {
                 backgroundRepeat: "no-repeat",
               }}
             >
-           <img
-              crossOrigin="anonymous"
-              src={backgroundRemovedImageUrl || character?.picture_character || ""}
-              alt={character?.role || "character"}
-              className="cartoon-image object-cover w-[1348px] h-[2050px] rounded-[40px]"
-            />
+              <img
+                crossOrigin="anonymous"
+                src={backgroundRemovedImageUrl || character?.picture_character || ""}
+                alt={character?.role || "character"}
+                className="cartoon-image object-cover w-[1348px] h-[2050px] rounded-[40px]"
+              />
             </div>
 
             <div className="relative w-full h-[290px]">
@@ -807,9 +929,15 @@ function CompletePageContent() {
                 >
                   <div
                     className="text-[95px] text-[#000000] leading-tight text-center px-10 whitespace-pre-line"
-                    style={{ fontFamily: "DNFBitBitv2, monospace", whiteSpace: "pre-wrap" }}
+                    style={{
+                      fontFamily: "DNFBitBitv2, monospace",
+                      whiteSpace: "pre-wrap",
+                    }}
                     dangerouslySetInnerHTML={{
-                      __html: randomMessage.replace(/\/n/g, "\n").split("\n").join("<br />"),
+                      __html: randomMessage
+                        .replace(/\/n/g, "\n")
+                        .split("\n")
+                        .join("<br />"),
                     }}
                   ></div>
                 </div>
@@ -877,11 +1005,15 @@ function CompletePageContent() {
       <div className="button-container flex items-center justify-center z-30 flex-row mb-[358px]">
         {!isImageUploadComplete ? (
           <div className="flex flex-col items-center gap-4">
-            <div className="text-[128px] text-[#451F0D] font-bold">이미지 업로드중...</div>
+            <div className="text-[128px] text-[#451F0D] font-bold">
+              이미지 업로드중...
+            </div>
           </div>
         ) : isPrinting ? (
           <div className="flex flex-col items-center gap-4">
-            <div className="text-[128px] text-[#451F0D] font-bold">출력 중입니다. 잠시만 기다려 주세요.</div>
+            <div className="text-[128px] text-[#451F0D] font-bold">
+              출력 중입니다. 잠시만 기다려 주세요.
+            </div>
           </div>
         ) : (
           <div className="w-[1594px] flex flex-row items-center justify-between gap-x-12">
