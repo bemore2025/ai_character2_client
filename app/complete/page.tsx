@@ -595,8 +595,8 @@ function CompletePageContent() {
              }
 
              .card-image {
-               width: 80mm;
-               height: 125mm;
+               width: 54mm;
+               height: 85.6mm;
                object-fit: contain;
                display: block;
              }
