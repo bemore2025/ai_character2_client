@@ -1,6 +1,5 @@
 "use client";
 import { Suspense, use, useRef, useEffect, useState, useCallback } from "react";
-import Loading from "@/app/loading";
 import Lottie from "lottie-react";
 import loaderAnimation from "@/public/loader.json";
 import Image from "next/image";
@@ -9,19 +8,10 @@ import { useRouter } from "next/navigation";
 import { useButtonSound } from "@/app/components/ButtonSound";
 import { toast } from "sonner";
 import {
-  capturePhotoFromVideo,
-  generatePhotoFileName,
-  blobToDataURL,
-} from "@/utils/camera";
-import {
   saveImageRecord,
   pollForImageResult,
   requestImageProcessing,
 } from "@/utils/imagePolling";
-import { WebcamComponent } from "./components/WebcamComponent";
-import { CameraCorners } from "./components/CameraCorners";
-import { ProcessingStatus } from "./components/ProcessingStatus";
-import { CountdownOverlay } from "./components/CountdownOverlay";
 import { PageProps, CameraPageContentProps, CameraClientProps } from "./types";
 import { useImageStore } from "@/app/store/useImageStore";
 
