@@ -174,7 +174,6 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
 
         if (pollingResult.success && pollingResult.data?.result) {
           const resultData = pollingResult.data.result;
-
           let backgroundImageUrl = "";
 
           if (typeof resultData === "string") {
@@ -203,6 +202,10 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
             "[Camera] Final image src preview:",
             backgroundImageUrl?.slice(0, 80)
           );
+          console.log(
+            "[Camera] final backgroundImageUrl:",
+            backgroundImageUrl?.slice?.(0, 120)
+          );
 
           if (backgroundImageUrl) {
             setImageData({
@@ -212,8 +215,22 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
               jobId: saveResult.jobId,
             });
 
-            // 중요: 긴 base64를 query string으로 넘기지 않음
-            router.push(`/complete?character=${characterId}&jobId=${saveResult.jobId}`);
+            try {
+              sessionStorage.setItem("generatedImageUrl", backgroundImageUrl);
+              sessionStorage.setItem("generatedJobId", saveResult.jobId);
+              sessionStorage.setItem("generatedCharacterId", characterId);
+              sessionStorage.setItem(
+                "generatedSituation",
+                situation || "변신"
+              );
+              console.log("[Camera] sessionStorage saved");
+            } catch (error) {
+              console.error("[Camera] sessionStorage save error:", error);
+            }
+
+            router.push(
+              `/complete?character=${characterId}&jobId=${saveResult.jobId}`
+            );
           } else {
             toast("이미지 URL을 찾을 수 없습니다", {
               description: "생성된 이미지 URL을 찾을 수 없습니다.",
