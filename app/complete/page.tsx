@@ -1,787 +1,427 @@
 "use client";
+import { Suspense, use, useRef, useEffect, useState, useCallback } from "react";
+import Loading from "@/app/loading";
+import Lottie from "lottie-react";
+import loaderAnimation from "@/public/loader.json";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
-import { useRouter, useSearchParams } from "next/navigation";
-import { useState, useEffect, Suspense, useRef, useCallback } from "react";
-import QRCodeComponent from "@/components/QRCode";
+import { useRouter } from "next/navigation";
 import { useButtonSound } from "@/app/components/ButtonSound";
-import domtoimage from "dom-to-image-more";
-import { toast } from "@/components/ui/use-toast";
-import { MessageResponse, Character, CharacterResponse } from "./types";
-import { IoMdRefresh } from "react-icons/io";
-import { useImageStore } from "@/app/store/useImageStore";
+import { toast } from "sonner";
 import {
+  capturePhotoFromVideo,
+  generatePhotoFileName,
+  blobToDataURL,
+} from "@/utils/camera";
+import {
+  saveImageRecord,
   pollForImageResult,
   requestImageProcessing,
 } from "@/utils/imagePolling";
-import Lottie from "lottie-react";
-import loaderAnimation from "@/public/loader.json";
+import { WebcamComponent } from "./components/WebcamComponent";
+import { CameraCorners } from "./components/CameraCorners";
+import { ProcessingStatus } from "./components/ProcessingStatus";
+import { CountdownOverlay } from "./components/CountdownOverlay";
+import { PageProps, CameraPageContentProps, CameraClientProps } from "./types";
+import { useImageStore } from "@/app/store/useImageStore";
 
-const CARD_WIDTH = 1594;
-const CARD_HEIGHT = 2543;
+export default function Page({ searchParams }: PageProps) {
+  return (
+    <Suspense fallback={<Loading />}>
+      <CameraPageContent searchParams={searchParams} />
+    </Suspense>
+  );
+}
 
-function CompletePageContent() {
+function CameraPageContent({ searchParams }: CameraPageContentProps) {
+  const resolvedSearchParams = use(searchParams);
+  const characterId = resolvedSearchParams.character;
+  const situation = resolvedSearchParams.situation;
+
+  return <CameraClient characterId={characterId} situation={situation} />;
+}
+
+function CameraClient({ characterId, situation }: CameraClientProps) {
   const router = useRouter();
-  const {
-    characterId: storedCharacterId,
-    situation: storedSituation,
-    backgroundRemovedImageUrl: storedImageUrl,
-    jobId: storedJobId,
-  } = useImageStore();
-
-  const [isMicActive, setIsMicActive] = useState(false);
-  const [isKeyboardActive, setIsKeyboardActive] = useState(false);
   const [isCountingDown, setIsCountingDown] = useState(false);
-  const [countdown, setCountdown] = useState(3);
-  const [showCharacter, setShowCharacter] = useState(false);
-  const [skill1Value, setSkill1Value] = useState(0);
-  const [skill2Value, setSkill2Value] = useState(0);
-  const [character, setCharacter] = useState<Character | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isRegenerating, setIsRegenerating] = useState(false);
-  const [qrCodeUrl, setQrCodeUrl] = useState("");
-  const [isImageUploadComplete, setIsImageUploadComplete] = useState(false);
-  const [isQrReady, setIsQrReady] = useState(false);
-  const [showQrInCard, setShowQrInCard] = useState(false);
-  const [debugInfo, setDebugInfo] = useState<string[]>([]);
-  const [isPrinting, setIsPrinting] = useState(false);
-  const [randomMessage, setRandomMessage] = useState<string>("");
-  const [localRefreshCount, setLocalRefreshCount] = useState<number>(2);
+  const [showWhiteCircle, setShowWhiteCircle] = useState(false);
+  const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [showLottieLoader, setShowLottieLoader] = useState(false);
+  const [processingMessage, setProcessingMessage] = useState("이미지 생성중...");
   const { playSound } = useButtonSound();
-  const searchParams = useSearchParams();
-  const characterId = searchParams.get("character");
-  const situationParam = searchParams.get("situation");
-  const imageParam = searchParams.get("image");
-  const resultImageParam = searchParams.get("resultImage");
-  const backgroundImageParam = searchParams.get("backgroundImage");
-  const [backgroundRemovedImageUrl, setBackgroundRemovedImageUrl] =
-    useState<string>("");
-  const photoCardRef = useRef<HTMLDivElement>(null);
-  const fullScreenRef = useRef<HTMLDivElement>(null);
+  const { setImageData } = useImageStore();
+  const flashSoundRef = useRef<HTMLAudioElement | null>(null);
+  const videoElementRef = useRef<HTMLVideoElement | null>(null);
 
-  const normalizeImageSrc = useCallback((value: string) => {
-    if (!value) return "";
+  useEffect(() => {
+    flashSoundRef.current = new Audio("/flash.wav");
+    flashSoundRef.current.load();
+
+    return () => {
+      if (flashSoundRef.current) {
+        flashSoundRef.current.pause();
+        flashSoundRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleVideoRef = useCallback((ref: HTMLVideoElement | null) => {
+    videoElementRef.current = ref;
+  }, []);
+
+  const isErrorString = useCallback((value: unknown) => {
+    if (typeof value !== "string") return false;
+    const trimmed = value.trim();
+    return trimmed.startsWith("ERROR:");
+  }, []);
+
+  const isValidImageSrc = useCallback((value: unknown) => {
+    if (typeof value !== "string") return false;
 
     const trimmed = value.trim();
+    if (!trimmed) return false;
+    if (trimmed.startsWith("ERROR:")) return false;
 
-    if (
+    return (
+      trimmed.startsWith("data:image/") ||
       trimmed.startsWith("http://") ||
       trimmed.startsWith("https://") ||
       trimmed.startsWith("blob:")
-    ) {
-      return trimmed;
-    }
-
-    if (trimmed.startsWith("data:image/")) {
-      return trimmed;
-    }
-
-    return `data:image/png;base64,${trimmed}`;
+    );
   }, []);
 
-  const fetchRandomMessage = async () => {
-    try {
-      const response = await fetch("/api/messages/random");
-      if (response.ok) {
-        const data: MessageResponse = await response.json();
-        setRandomMessage(data.message);
+  const normalizeImageSrc = useCallback(
+    (value: string) => {
+      if (!value) return "";
+
+      const trimmed = value.trim();
+
+      if (!trimmed) return "";
+      if (trimmed.startsWith("ERROR:")) return "";
+
+      if (
+        trimmed.startsWith("http://") ||
+        trimmed.startsWith("https://") ||
+        trimmed.startsWith("blob:") ||
+        trimmed.startsWith("data:image/")
+      ) {
+        return trimmed;
       }
+
+      const looksLikeBase64 =
+        trimmed.length > 100 &&
+        /^[A-Za-z0-9+/=\s_-]+$/.test(trimmed.replace(/\n/g, "").replace(/\r/g, ""));
+
+      if (looksLikeBase64) {
+        return `data:image/png;base64,${trimmed}`;
+      }
+
+      return "";
+    },
+    []
+  );
+
+  const extractImageUrlFromPollingResult = useCallback(
+    (resultData: unknown) => {
+      if (!resultData) return "";
+
+      if (typeof resultData === "string") {
+        return normalizeImageSrc(resultData);
+      }
+
+      if (typeof resultData === "object") {
+        const obj = resultData as Record<string, unknown>;
+
+        const candidates = [
+          obj.result_image_data_url,
+          obj.background_removed_image_url,
+          obj.result_image_url,
+          obj.generated_image_url,
+          obj.image_url,
+          obj.result,
+          obj.result_image_b64,
+        ];
+
+        for (const candidate of candidates) {
+          if (typeof candidate === "string") {
+            const normalized = normalizeImageSrc(candidate);
+            if (normalized) return normalized;
+          }
+        }
+      }
+
+      return "";
+    },
+    [normalizeImageSrc]
+  );
+
+  const extractErrorMessageFromPollingResult = useCallback(
+    (resultData: unknown) => {
+      if (!resultData) return "";
+
+      if (typeof resultData === "string" && isErrorString(resultData)) {
+        return resultData;
+      }
+
+      if (typeof resultData === "object") {
+        const obj = resultData as Record<string, unknown>;
+        const candidates = [obj.error, obj.message, obj.result];
+
+        for (const candidate of candidates) {
+          if (typeof candidate === "string" && isErrorString(candidate)) {
+            return candidate;
+          }
+        }
+      }
+
+      return "";
+    },
+    [isErrorString]
+  );
+
+  const uploadPhotoToSupabase = async (photoBlob: Blob, fileName: string) => {
+    try {
+      const formData = new FormData();
+      formData.append("file", photoBlob, fileName);
+      formData.append("fileName", fileName);
+
+      const response = await fetch("/api/upload-photo", {
+        method: "POST",
+        body: formData,
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        return null;
+      }
+
+      return result;
     } catch (error) {
-      setRandomMessage("경상좌수영 수군 출전 준비 완료!");
+      console.error("[Camera] uploadPhotoToSupabase error:", error);
+      return null;
     }
   };
 
-  const fetchCharacter = async (characterId: string) => {
-    try {
-      const response = await fetch(`/api/characters/${characterId}`);
-      if (response.ok) {
-        const data: CharacterResponse = await response.json();
-        setCharacter(data.character);
-        if (data.character.ability1_min && data.character.ability1_max) {
-          const randomSkill1 = Math.floor(
-            Math.random() *
-              (data.character.ability1_max -
-                data.character.ability1_min +
-                1) +
-              data.character.ability1_min
-          );
-          setSkill1Value(randomSkill1);
-        }
-        if (data.character.ability2_min && data.character.ability2_max) {
-          const randomSkill2 = Math.floor(
-            Math.random() *
-              (data.character.ability2_max -
-                data.character.ability2_min +
-                1) +
-              data.character.ability2_min
-          );
-          setSkill2Value(randomSkill2);
-        }
-      } else {
-        setSkill1Value(Math.floor(Math.random() * 201 + 100));
-        setSkill2Value(Math.floor(Math.random() * 201 + 100));
+  const processWithFaceSwap = useCallback(
+    async (uploadedPhotoUrl: string) => {
+      if (!characterId) {
+        toast("캐릭터 정보가 없습니다", {
+          description: "캐릭터를 선택해주세요.",
+        });
+        return;
       }
-    } catch (error) {
-      setSkill1Value(Math.floor(Math.random() * 201 + 100));
-      setSkill2Value(Math.floor(Math.random() * 201 + 100));
-    }
-  };
 
-  useEffect(() => {
-    console.log("=== Complete 페이지 진입 - 재생성 카운트 초기화 ===");
-    localStorage.setItem("regenerateCount", "2");
-    setLocalRefreshCount(2);
-  }, []);
-
-  useEffect(() => {
-    const savedCount = localStorage.getItem("regenerateCount");
-    if (savedCount !== null) {
-      setLocalRefreshCount(parseInt(savedCount));
-    }
-  }, [isRegenerating]);
-
-  useEffect(() => {
-    const printingState = localStorage.getItem("isPrinting");
-    const printingStartTime = localStorage.getItem("printingStartTime");
-    if (printingState === "true" && printingStartTime) {
-      const startTime = parseInt(printingStartTime);
-      const currentTime = Date.now();
-      const elapsedTime = currentTime - startTime;
-      if (elapsedTime < 60000) {
-        setIsPrinting(true);
-        const remainingTime = 60000 - elapsedTime;
-        setTimeout(() => {
-          setIsPrinting(false);
-          localStorage.removeItem("isPrinting");
-          localStorage.removeItem("printingStartTime");
-        }, remainingTime);
-      } else {
-        localStorage.removeItem("isPrinting");
-        localStorage.removeItem("printingStartTime");
-      }
-    }
-  }, []);
-
-  const addDebugInfo = useCallback((message: string) => {
-    const timestamp = new Date().toLocaleTimeString();
-    const debugMessage = `[${timestamp}] ${message}`;
-    console.log(debugMessage);
-    setDebugInfo((prev) => [...prev.slice(-4), debugMessage]);
-  }, []);
-
-  useEffect(() => {
-    if (characterId) {
-      fetchCharacter(characterId);
-    } else if (storedCharacterId) {
-      fetchCharacter(storedCharacterId);
-    } else {
-      setSkill1Value(Math.floor(Math.random() * 201 + 100));
-      setSkill2Value(Math.floor(Math.random() * 201 + 100));
-    }
-  }, [characterId, storedCharacterId]);
-
-  useEffect(() => {
-    fetchRandomMessage();
-  }, []);
-
-  useEffect(() => {
-    if (backgroundImageParam) {
-      const decodedUrl = decodeURIComponent(backgroundImageParam);
-      const normalized = normalizeImageSrc(decodedUrl);
-      addDebugInfo(`backgroundImageParam 사용: ${normalized.slice(0, 80)}...`);
-      setBackgroundRemovedImageUrl(normalized);
-      return;
-    }
-
-    if (storedImageUrl) {
-      const normalized = normalizeImageSrc(storedImageUrl);
-      addDebugInfo(`store 이미지 사용: ${normalized.slice(0, 80)}...`);
-      setBackgroundRemovedImageUrl(normalized);
-      return;
-    }
-
-    if (resultImageParam) {
       try {
-        const apiResponse = JSON.parse(decodeURIComponent(resultImageParam));
-        let imageSrc = "";
+        setShowLottieLoader(true);
+        setProcessingMessage("이미지 저장 중...");
 
-        if (typeof apiResponse === "string") {
-          imageSrc = apiResponse;
-        } else if (apiResponse.result?.background_removed_image_url) {
-          imageSrc = apiResponse.result.background_removed_image_url;
-        } else if (apiResponse.background_removed_image_url) {
-          imageSrc = apiResponse.background_removed_image_url;
-        } else if (apiResponse.result?.result_image_url) {
-          imageSrc = apiResponse.result.result_image_url;
-        } else if (apiResponse.result_image_url) {
-          imageSrc = apiResponse.result_image_url;
+        const saveResult = await saveImageRecord(uploadedPhotoUrl);
+
+        if (!saveResult.success || !saveResult.jobId) {
+          toast("이미지 저장 실패", {
+            description: saveResult.error || "이미지 저장에 실패했습니다.",
+          });
+          setShowLottieLoader(false);
+          return;
         }
 
-        if (imageSrc) {
-          const normalized = normalizeImageSrc(imageSrc);
-          addDebugInfo(`resultImageParam 사용: ${normalized.slice(0, 80)}...`);
-          setBackgroundRemovedImageUrl(normalized);
+        setProcessingMessage("이미지 생성 중...");
+
+        const awsResult = await requestImageProcessing(
+          uploadedPhotoUrl,
+          characterId,
+          situation || "변신",
+          saveResult.jobId,
+          2
+        );
+
+        if (!awsResult.success) {
+          toast("AWS API 요청 실패", {
+            description: awsResult.error || "이미지 처리 요청에 실패했습니다.",
+          });
+          setShowLottieLoader(false);
+          return;
+        }
+
+        setProcessingMessage("결과 대기 중...");
+
+        const pollingResult = await pollForImageResult(saveResult.jobId, {
+          maxAttempts: 60,
+          intervalMs: 5000,
+          onProgress: () => {
+            setProcessingMessage("결과 대기 중...");
+          },
+        });
+
+        console.log("[Camera] Polling completed:", {
+          success: pollingResult.success,
+          hasData: !!pollingResult.data,
+          hasResult: !!pollingResult.data?.result,
+          result: pollingResult.data?.result,
+        });
+
+        if (pollingResult.success && pollingResult.data?.result) {
+          const resultData = pollingResult.data.result;
+
+          const explicitError = extractErrorMessageFromPollingResult(resultData);
+          if (explicitError) {
+            console.error("[Camera] Polling returned error result:", explicitError);
+            toast("이미지 생성 실패", {
+              description: explicitError.replace(/^ERROR:\s*/, ""),
+            });
+            setShowLottieLoader(false);
+            return;
+          }
+
+          const backgroundImageUrl = extractImageUrlFromPollingResult(resultData);
+
+          console.log(
+            "[Camera] Final image src preview:",
+            backgroundImageUrl?.slice(0, 80)
+          );
+          console.log(
+            "[Camera] final backgroundImageUrl:",
+            backgroundImageUrl?.slice?.(0, 120)
+          );
+
+          if (isValidImageSrc(backgroundImageUrl)) {
+            setImageData({
+              characterId,
+              situation: situation || "변신",
+              backgroundRemovedImageUrl: backgroundImageUrl,
+              jobId: saveResult.jobId,
+            });
+
+            try {
+              sessionStorage.setItem("generatedImageUrl", backgroundImageUrl);
+              sessionStorage.setItem("generatedJobId", saveResult.jobId);
+              sessionStorage.setItem("generatedCharacterId", characterId);
+              sessionStorage.setItem(
+                "generatedSituation",
+                situation || "변신"
+              );
+              console.log("[Camera] sessionStorage saved");
+            } catch (error) {
+              console.error("[Camera] sessionStorage save error:", error);
+            }
+
+            router.push(
+              `/complete?character=${characterId}&jobId=${saveResult.jobId}`
+            );
+          } else {
+            console.error("[Camera] Invalid image result:", resultData);
+            toast("이미지 생성 실패", {
+              description: "생성된 결과가 올바른 이미지 형식이 아닙니다.",
+            });
+            setShowLottieLoader(false);
+          }
+        } else {
+          console.log("[Camera] Polling failed:", pollingResult.error);
+          toast("이미지 생성 실패", {
+            description: pollingResult.error || "이미지 생성에 실패했습니다.",
+          });
+          setShowLottieLoader(false);
         }
       } catch (error) {
-        const normalized = normalizeImageSrc(resultImageParam);
-        addDebugInfo(
-          `resultImageParam 문자열 직접 사용: ${normalized.slice(0, 80)}...`
-        );
-        setBackgroundRemovedImageUrl(normalized);
-      }
-    }
-  }, [
-    backgroundImageParam,
-    resultImageParam,
-    storedImageUrl,
-    addDebugInfo,
-    normalizeImageSrc,
-  ]);
-
-  useEffect(() => {
-    console.log(
-      "[Complete] storedImageUrl:",
-      storedImageUrl?.slice?.(0, 80)
-    );
-    console.log(
-      "[Complete] final backgroundRemovedImageUrl:",
-      backgroundRemovedImageUrl?.slice?.(0, 80)
-    );
-  }, [storedImageUrl, backgroundRemovedImageUrl]);
-
-  useEffect(() => {
-    if (imageParam) {
-      addDebugInfo(`이미지 파라미터 감지: ${imageParam}`);
-      setQrCodeUrl(imageParam);
-      setShowQrInCard(true);
-    } else if (backgroundImageParam || resultImageParam || storedImageUrl) {
-      setShowQrInCard(true);
-    }
-  }, [
-    imageParam,
-    backgroundImageParam,
-    resultImageParam,
-    storedImageUrl,
-    addDebugInfo,
-  ]);
-
-  useEffect(() => {
-    const autoStart = async () => {
-      if (isImageUploadComplete || imageParam) {
-        return;
-      }
-      addDebugInfo("자동 프로세스 시작 준비");
-      const timer = setTimeout(() => {
-        addDebugInfo("자동 프로세스 시작");
-        captureAndUploadImage();
-      }, 0);
-      return () => clearTimeout(timer);
-    };
-
-    if (photoCardRef.current && !isImageUploadComplete && !imageParam) {
-      autoStart();
-    }
-  }, [isImageUploadComplete, imageParam, addDebugInfo]);
-
-  const captureAndUploadImage = useCallback(async () => {
-    try {
-      addDebugInfo("이미지 캡처 시작");
-      setIsLoading(true);
-
-      const targetElement = photoCardRef.current;
-      if (!targetElement) {
-        addDebugInfo("캡처 대상 요소를 찾을 수 없음");
-        return;
-      }
-
-      addDebugInfo("Canvas 변환 시작");
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      const dataUrl = await domtoimage.toJpeg(targetElement, {
-        bgcolor: "#B9D8F0",
-        width: targetElement.offsetWidth,
-        height: targetElement.offsetHeight,
-        quality: 0.92,
-      });
-
-      addDebugInfo("이미지 변환 완료, Supabase 업로드 준비");
-
-      const byteString = atob(dataUrl.split(",")[1]);
-      const mimeString = dataUrl.split(",")[0].split(":")[1].split(";")[0];
-
-      const ab = new ArrayBuffer(byteString.length);
-      const ia = new Uint8Array(ab);
-
-      for (let i = 0; i < byteString.length; i++) {
-        ia[i] = byteString.charCodeAt(i);
-      }
-
-      const blob = new Blob([ia], { type: mimeString });
-      const file = new File([blob], "photo-card.jpg", { type: "image/jpeg" });
-
-      const formData = new FormData();
-      formData.append("file", file);
-
-      addDebugInfo(`Supabase 업로드 시작 - 파일 크기: ${file.size} bytes`);
-
-      let uploadResult;
-      let retryCount = 0;
-      const maxRetries = 3;
-
-      while (retryCount < maxRetries) {
-        try {
-          const uploadResponse = await fetch("/api/upload-image", {
-            method: "POST",
-            body: formData,
-          });
-
-          addDebugInfo(
-            `업로드 시도 ${retryCount + 1}: 응답 상태 ${uploadResponse.status}`
-          );
-
-          uploadResult = await uploadResponse.json();
-
-          if (uploadResult.success && uploadResult.url) {
-            addDebugInfo(
-              `Supabase 업로드 성공: ${uploadResult.url.substring(0, 60)}...`
-            );
-
-            setQrCodeUrl(uploadResult.url);
-            setShowQrInCard(true);
-
-            const currentUrl = window.location.href;
-            const url = new URL(currentUrl);
-            url.searchParams.set("image", uploadResult.url);
-            window.history.replaceState({}, "", url.toString());
-
-            addDebugInfo("QR 코드 렌더링 대기 중");
-            return;
-          } else {
-            addDebugInfo(
-              `업로드 실패 (시도 ${retryCount + 1}): ${uploadResult.error}`
-            );
-            break;
-          }
-        } catch (networkError) {
-          retryCount++;
-          addDebugInfo(
-            `업로드 네트워크 에러 (시도 ${retryCount}): ${
-              networkError instanceof Error
-                ? networkError.message
-                : "Unknown error"
-            }`
-          );
-          if (retryCount < maxRetries) {
-            addDebugInfo(`${2000 * retryCount}ms 후 재시도...`);
-            await new Promise((resolve) =>
-              setTimeout(resolve, 2000 * retryCount)
-            );
-          }
-        }
-      }
-
-      if (!uploadResult?.success) {
-        addDebugInfo(`모든 업로드 시도 실패 (${maxRetries}회)`);
-        setIsImageUploadComplete(true);
-      }
-    } catch (error) {
-      addDebugInfo(
-        `이미지 캡처 및 업로드 에러: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
-    } finally {
-      setIsLoading(false);
-      setIsImageUploadComplete(true);
-    }
-  }, [addDebugInfo]);
-
-  useEffect(() => {
-    if (isImageUploadComplete) return;
-    if (qrCodeUrl) {
-      addDebugInfo("QR URL 이미 설정됨, 추가 캡처 스킵");
-    }
-  }, [qrCodeUrl, isImageUploadComplete, addDebugInfo]);
-
-  const handleQrReady = () => {
-    addDebugInfo("QR 코드 렌더링 완료");
-    setIsQrReady(true);
-  };
-
-  useEffect(() => {
-    if (qrCodeUrl) {
-      setIsQrReady(false);
-      addDebugInfo(`QR 코드 URL 설정: ${qrCodeUrl.substring(0, 50)}...`);
-    }
-  }, [qrCodeUrl, addDebugInfo]);
-
-  const handleTransform = () => {
-    playSound();
-    setIsPrinting(true);
-    const startTime = Date.now();
-    localStorage.setItem("isPrinting", "true");
-    localStorage.setItem("printingStartTime", startTime.toString());
-    setTimeout(async () => {
-      await handlePrint();
-    }, 100);
-    setTimeout(() => {
-      setIsPrinting(false);
-      localStorage.removeItem("isPrinting");
-      localStorage.removeItem("printingStartTime");
-    }, 60000);
-  };
-
-  const handleGoHome = () => {
-    playSound();
-    setTimeout(() => {
-      router.push("/");
-    }, 300);
-  };
-
-  const handleRegenerate = async () => {
-    playSound();
-    if (!storedCharacterId || !storedImageUrl || !storedJobId) {
-      toast({
-        title: "재생성 불가",
-        description: "저장된 이미지 정보가 없습니다.",
-      });
-      return;
-    }
-    const currentCount = parseInt(
-      localStorage.getItem("regenerateCount") || "0"
-    );
-    if (currentCount <= 0) {
-      toast({
-        title: "재생성 불가",
-        description: "재생성 횟수를 모두 사용했습니다.",
-      });
-      return;
-    }
-
-    setIsRegenerating(true);
-    try {
-      const currentRegenerationCount = parseInt(
-        localStorage.getItem("regenerateCount") || "2"
-      );
-      const nextRegenerationCount = Math.max(
-        0,
-        currentRegenerationCount - 1
-      );
-
-      const awsResult = await requestImageProcessing(
-        storedImageUrl,
-        storedCharacterId,
-        storedSituation || "재생성",
-        storedJobId,
-        nextRegenerationCount
-      );
-
-      if (!awsResult.success) {
-        toast({
-          title: "이미지 처리 요청 실패",
-          description: awsResult.error || "이미지 처리 요청에 실패했습니다.",
+        console.error("[Camera] processWithFaceSwap error:", error);
+        toast("처리 중 오류 발생", {
+          description:
+            error instanceof Error
+              ? error.message
+              : "알 수 없는 오류가 발생했습니다.",
         });
-        setIsRegenerating(false);
-        return;
+        setShowLottieLoader(false);
       }
+    },
+    [
+      characterId,
+      situation,
+      router,
+      setImageData,
+      extractErrorMessageFromPollingResult,
+      extractImageUrlFromPollingResult,
+      isValidImageSrc,
+    ]
+  );
 
-      const pollingResult = await pollForImageResult(storedJobId, {
-        maxAttempts: 60,
-        intervalMs: 5000,
-        regenerationCount: nextRegenerationCount,
+  const captureAndUploadPhoto = useCallback(async () => {
+    if (!videoElementRef.current) return;
+
+    if (videoElementRef.current.readyState < 2) {
+      toast("카메라가 준비되지 않았습니다", {
+        description: "잠시 후 다시 시도해주세요.",
       });
+      return;
+    }
 
-      if (pollingResult.success && pollingResult.data?.result) {
-        const resultData = pollingResult.data.result;
-        let backgroundImageUrl = "";
+    try {
+      setIsUploading(true);
 
-        if (typeof resultData === "string") {
-          backgroundImageUrl = normalizeImageSrc(resultData);
-        } else if (typeof resultData === "object" && resultData !== null) {
-          if (resultData.background_removed_image_url) {
-            backgroundImageUrl = normalizeImageSrc(
-              resultData.background_removed_image_url
-            );
-          } else if (resultData.result_image_url) {
-            backgroundImageUrl = normalizeImageSrc(
-              resultData.result_image_url
-            );
-          }
-        }
+      const photoBlob = await capturePhotoFromVideo(videoElementRef.current);
+      const photoDataURL = await blobToDataURL(photoBlob);
+      setCapturedPhoto(photoDataURL);
 
-        if (backgroundImageUrl) {
-          const newCount = Math.max(0, currentCount - 1);
-          localStorage.setItem("regenerateCount", newCount.toString());
-          setLocalRefreshCount(newCount);
+      const fileName = generatePhotoFileName();
+      const uploadResult = await uploadPhotoToSupabase(photoBlob, fileName);
 
-          setBackgroundRemovedImageUrl(backgroundImageUrl);
-          setIsImageUploadComplete(false);
-          setQrCodeUrl("");
-
-          setTimeout(async () => {
-            await captureAndUploadImage();
-            toast({
-              title: "재생성 완료",
-              description: "새로운 이미지가 생성되었습니다.",
-            });
-          }, 100);
-        } else {
-          toast({
-            title: "이미지 URL을 찾을 수 없습니다",
-            description: "생성된 이미지 URL을 찾을 수 없습니다.",
-          });
-        }
+      if (uploadResult && uploadResult.publicUrl) {
+        setIsUploading(false);
+        await processWithFaceSwap(uploadResult.publicUrl);
       } else {
-        toast({
-          title: "이미지 생성 실패",
-          description: "이미지 생성에 실패했습니다.",
+        toast("사진 업로드 실패", {
+          description: "사진 업로드에 실패했습니다.",
         });
+        setIsUploading(false);
       }
     } catch (error) {
-      toast({
-        title: "오류 발생",
-        description:
-          error instanceof Error
-            ? error.message
-            : "알 수 없는 오류가 발생했습니다.",
+      console.error("[Camera] captureAndUploadPhoto error:", error);
+      toast("사진 촬영 실패", {
+        description: "사진 촬영 중 오류가 발생했습니다.",
       });
-    } finally {
-      setIsRegenerating(false);
+      setIsUploading(false);
     }
-  };
+  }, [processWithFaceSwap]);
 
-  const isAllProcessComplete = isImageUploadComplete;
+  const handleTransform = useCallback(() => {
+    playSound();
 
-  useEffect(() => {
-    if (isCountingDown && countdown > 0) {
-      const timer = setTimeout(() => {
-        setCountdown(countdown - 1);
-      }, 1000);
-      return () => clearTimeout(timer);
-    } else if (isCountingDown && countdown === 0) {
-      setShowCharacter(true);
-      setTimeout(() => {
-        router.push("/complete");
-      }, 2000);
-    }
-  }, [isCountingDown, countdown, router]);
+    if (flashSoundRef.current) {
+      flashSoundRef.current.currentTime = 0;
+      const playPromise = flashSoundRef.current.play();
 
-  const getStatusMessage = () => {
-    return isImageUploadComplete ? "완료!" : "이미지 업로드중...";
-  };
-
-  const handleDownloadImage = async () => {
-    try {
-      playSound();
-      const targetElement = photoCardRef.current;
-      if (!targetElement) {
-        toast({
-          title: "오류",
-          description: "이미지를 생성할 수 없습니다.",
-          variant: "destructive",
-        });
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 3000));
-      if (document.fonts && document.fonts.ready) {
-        await document.fonts.ready;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      const dataUrl = await domtoimage.toJpeg(targetElement, {
-        bgcolor: "#B9D8F0",
-        width: targetElement.offsetWidth,
-        height: targetElement.offsetHeight,
-        quality: 0.92,
-        filter: (node) => {
-          const element = node as Element;
-          if (element.tagName === "SCRIPT" || element.tagName === "STYLE")
-            return false;
-          return true;
-        },
-      });
-
-      const link = document.createElement("a");
-      link.download = `포토카드_${character?.role || "character"}_${Date.now()}.jpg`;
-      link.href = dataUrl;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      toast({
-        title: "다운로드 완료",
-        description: "포토카드 이미지가 다운로드되었습니다.",
-      });
-    } catch (error) {
-      toast({
-        title: "오류",
-        description: "이미지 다운로드 중 오류가 발생했습니다.",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handlePrint = async () => {
-    try {
-      const backImageUrl = `${window.location.origin}/print_front.jpg`;
-      const targetElement = photoCardRef.current;
-      if (!targetElement) return;
-
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-
-      if (document.fonts && document.fonts.ready) {
-        await document.fonts.ready;
-      }
-
-      const images = Array.from(targetElement.querySelectorAll("img"));
-      await Promise.all(
-        images.map((img) => {
-          if (img.complete && img.naturalWidth > 0) return Promise.resolve();
-          return new Promise((resolve) => {
-            img.onload = () => resolve(true);
-            img.onerror = () => resolve(true);
+      if (playPromise !== undefined) {
+        playPromise.catch(() => {
+          toast("오디오 재생 실패", {
+            description: "오디오 파일을 재생할 수 없습니다",
+            action: {
+              label: "확인",
+              onClick: () => {},
+            },
           });
-        })
-      );
-
-      const dataUrl = await domtoimage.toPng(targetElement, {
-        bgcolor: "#B9D8F0",
-        width: 1594,
-        height: 2543,
-        quality: 1.0,
-        style: {
-          transform: "scale(1)",
-          transformOrigin: "top left",
-          width: "1594px",
-          height: "2543px",
-        },
-        filter: (node) => {
-          const element = node as Element;
-          if (element.tagName === "SCRIPT" || element.tagName === "STYLE") {
-            return false;
-          }
-          return true;
-        },
-      });
-
-      const printWindow = window.open("", "_blank");
-      if (!printWindow) return;
-
-      const printContent = `
-       <!DOCTYPE html>
-       <html>
-         <head>
-           <title>포토카드 양면 출력</title>
-           <meta charset="utf-8" />
-           <style>
-             @page {
-               size: A4;
-               margin: 0;
-             }
-
-             * {
-               box-sizing: border-box;
-               margin: 0;
-               padding: 0;
-             }
-
-             html, body {
-               width: 100%;
-               height: 100%;
-               background: white;
-               -webkit-print-color-adjust: exact;
-               print-color-adjust: exact;
-             }
-
-             .page {
-               width: 210mm;
-               height: 297mm;
-               display: flex;
-               align-items: center;
-               justify-content: center;
-               page-break-after: always;
-               overflow: hidden;
-             }
-
-             .page:last-child {
-               page-break-after: auto;
-             }
-
-             .card-image {
-               width: 54mm;
-               height: 85.6mm;
-               object-fit: contain;
-               display: block;
-             }
-
-             .card-image.back {
-               transform: scaleX(-1) scaleY(-1);
-             }
-           </style>
-         </head>
-         <body>
-           <div class="page">
-             <img id="front-image" src="${dataUrl}" alt="포토카드 앞면" class="card-image" />
-           </div>
-           <div class="page">
-             <img id="back-image" src="${backImageUrl}" alt="포토카드 뒷면" class="card-image back" />
-           </div>
-
-           <script>
-             const front = document.getElementById("front-image");
-             const back = document.getElementById("back-image");
-
-             let loaded = 0;
-             const done = () => {
-               loaded += 1;
-               if (loaded === 2) {
-                 setTimeout(() => window.print(), 500);
-               }
-             };
-
-             if (front.complete) done();
-             else {
-               front.onload = done;
-               front.onerror = done;
-             }
-
-             if (back.complete) done();
-             else {
-               back.onload = done;
-               back.onerror = done;
-             }
-
-             window.onafterprint = () => {
-               setTimeout(() => window.close(), 300);
-             };
-           </script>
-         </body>
-       </html>
-     `;
-
-      printWindow.document.open();
-      printWindow.document.write(printContent);
-      printWindow.document.close();
-    } catch (error) {
-      console.error("출력 오류:", error);
-      toast({
-        title: "출력 오류",
-        description: "포토카드 출력 중 오류가 발생했습니다.",
-        variant: "destructive",
-      });
+        });
+      }
     }
-  };
 
-  const formatRoleText = (role: string) => {
-    if (!role) return "";
-    if (role.length === 2) return role.split("").join("   ");
-    else if (role.length === 3) return role.split("").join(" ");
-    return role;
-  };
+    setTimeout(() => {
+      setIsCountingDown(true);
+    }, 300);
+  }, [playSound]);
+
+  const handleCountdownComplete = useCallback(() => {
+    captureAndUploadPhoto();
+
+    setShowWhiteCircle(true);
+    setIsCountingDown(false);
+
+    setTimeout(() => {
+      setShowWhiteCircle(false);
+    }, 300);
+  }, [captureAndUploadPhoto]);
 
   return (
-    <div
-      ref={fullScreenRef}
-      className="w-full h-screen relative flex flex-col items-center justify-between"
-    >
+    <div className="w-full h-screen relative flex flex-col items-center justify-between">
       <Image
         src="/bg2.webp"
         alt="background"
@@ -790,278 +430,115 @@ function CompletePageContent() {
         priority
         unoptimized
       />
-      <div className="flex flex-col items-center justify-center z-30 mt-[300px]">
+
+      <div className="flex flex-col items-center justify-center z-30 mt-[300px] animate-fade-in">
         <div
-          className="text-[190px] font-bold text-center text-[#481F0E]"
+          className="text-[260px] font-bold text-center text-[#481F0E]"
           style={{ fontFamily: "MuseumClassic, serif" }}
         >
-          "출전 준비 완료"
+          사진 촬영
         </div>
       </div>
 
-      {isRegenerating ? (
-        <div className="absolute top-[582px] w-[1594px] h-[2543px] z-20 flex items-center justify-center">
-          <Lottie
-            animationData={loaderAnimation}
-            loop={true}
-            style={{ width: 800, height: 800 }}
-          />
-        </div>
-      ) : (
-        <div
-          ref={photoCardRef}
-          className="photo-card absolute top-[582px] w-[1594px] h-[2543px] border-[10px] border-black z-20 rounded-[50px] flex flex-col items-center justify-start bg-[#B9D8F0] pt-8"
-          style={{ backgroundColor: "#B9D8F0" }}
-        >
-          <div
-            className="text-[170px] font-bold text-center text-[#481F0E] role-text relative"
-            style={{ fontFamily: "MuseumClassic, serif" }}
-          >
-            <img
-              src="/title_img.png"
-              alt="title decoration"
-              className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-0 flex-shrink-0"
-              style={{
-                width: "1226px",
-                height: "149px",
-                minWidth: "1226px",
-                minHeight: "149px",
-                maxWidth: "1226px",
-                maxHeight: "149px",
-                border: "none",
-                outline: "none",
-                boxShadow: "none",
-                backgroundColor: "transparent",
-              }}
+      <div className="absolute top-[949px] w-[1225px] aspect-square animate-fade-in-delay rounded-full overflow-hidden">
+        {!showLottieLoader && (
+          <div className="absolute inset-0 flex items-center justify-center z-20 rounded-full overflow-hidden">
+            <WebcamComponent onVideoRef={handleVideoRef} />
+          </div>
+        )}
+
+        {capturedPhoto && !showLottieLoader && (
+          <div className="absolute inset-0 z-40 rounded-full overflow-hidden">
+            <Image
+              src={capturedPhoto}
+              alt="촬영된 사진"
+              fill
+              className="object-cover"
             />
-            <span
-              className="relative z-10 text-black role-name"
-              style={{
-                fontFamily: "Galmuri7",
-                fontSize: "189px",
-                letterSpacing: "-5%",
-                border: "none",
-                outline: "none",
-                boxShadow: "none",
-                backgroundColor: "transparent",
-              }}
-            >
-              {formatRoleText(character?.role || "")}
-            </span>
           </div>
+        )}
 
-          <div className="w-[1368px] h-[2070px] z-20 rounded-[50px] mb-[100px] relative overflow-hidden flex flex-col items-center justify-end">
-            {character?.star_count && character.star_count > 0 && (
-              <div
-                className="absolute bottom-[480px] right-[50px] z-30 flex flex-col items-center gap-2"
-                style={{
-                  border: "none",
-                  outline: "none",
-                  boxShadow: "none",
-                  backgroundColor: "transparent",
-                }}
-              >
-                {Array.from({ length: character.star_count }, (_, index) => (
-                  <div
-                    key={index}
-                    className="w-[136px] h-[136px] relative"
-                    style={{
-                      backgroundImage: "url(/star.png)",
-                      backgroundSize: "contain",
-                      backgroundRepeat: "no-repeat",
-                      backgroundPosition: "center",
-                      backgroundColor: "transparent",
-                      border: "none",
-                      outline: "none",
-                      boxShadow: "none",
-                    }}
-                  />
-                ))}
-              </div>
-            )}
+        {showWhiteCircle && !capturedPhoto && !showLottieLoader && (
+          <div className="absolute inset-0 bg-white/80 rounded-full z-35 animate-flash"></div>
+        )}
 
-            <div
-              className="qrcode absolute bottom-0 right-0 w-[460px] h-[460px] bg-[#B9D8F0] z-30 border-[21px] border-black rounded-tl-[50px] rounded-br-[50px] flex items-center justify-center"
-              style={{ backgroundColor: "#B9D8F0" }}
-            >
-              {qrCodeUrl ? (
-                <QRCodeComponent
-                  value={qrCodeUrl}
-                  size={380}
-                  className="rounded-lg border-none"
-                  onReady={handleQrReady}
-                />
-              ) : (
-                <div className="w-[380px] h-[380px] bg-white flex items-center justify-center">
-                  <div className="text-[24px] text-gray-400">QR 준비중</div>
-                </div>
-              )}
-            </div>
-
-            <div
-              className="absolute inset-0 border-[21px] border-black thick-container rounded-[60px]"
-              style={{
-                backgroundImage: `url("/card_bg2.png")`,
-                backgroundSize: "cover",
-                backgroundPosition: "center",
-                backgroundRepeat: "no-repeat",
-              }}
-            >
-              <img
-                crossOrigin="anonymous"
-                src={backgroundRemovedImageUrl || character?.picture_character || ""}
-                alt={character?.role || "character"}
-                className="cartoon-image object-cover w-[1348px] h-[2050px] rounded-[40px]"
+        {showLottieLoader && (
+          <div className="absolute inset-0 z-50 rounded-full overflow-hidden flex items-center justify-center">
+            <div className="w-full h-full">
+              <Lottie
+                animationData={loaderAnimation}
+                loop={true}
+                autoplay={true}
+                style={{ width: "100%", height: "100%" }}
               />
-            </div>
-
-            <div className="relative w-full h-[290px]">
-              <div className="absolute top-0 left-0 w-full h-[290px] border-[21px] border-black z-25 rounded-bl-[50px] rounded-br-[50px] ability-frame" />
-              <div className="w-full h-[290px] z-20 bg-[#E4BE50] flex flex-row border-none relative">
-                <div
-                  className="absolute w-[814px] h-[298px] z-30 flex flex-col items-center justify-center bg-[#B9D8F0] rounded-[130px] border-[21px] border-black"
-                  style={{
-                    top: "-350px",
-                    left: "32.5%",
-                    transform: "translateX(-50%)",
-                    fontFamily: "MuseumClassic, serif",
-                  }}
-                >
-                  <div
-                    className="text-[95px] text-[#000000] leading-tight text-center px-10 whitespace-pre-line"
-                    style={{
-                      fontFamily: "DNFBitBitv2, monospace",
-                      whiteSpace: "pre-wrap",
-                    }}
-                    dangerouslySetInnerHTML={{
-                      __html: randomMessage
-                        .replace(/\/n/g, "\n")
-                        .split("\n")
-                        .join("<br />"),
-                    }}
-                  ></div>
-                </div>
-
-                <div className="flex-1 flex flex-row border-none relative h-[287.5px]">
-                  <div className="flex-1 flex flex-col border-none">
-                    <div
-                      className="flex-1 bg-[#0068B7] flex flex-col items-center justify-center border-none"
-                      style={{ fontFamily: "DNFBitBitv2, monospace" }}
-                    >
-                      <p
-                        style={{ fontFamily: "DNFBitBitv2, monospace" }}
-                        className="text-[69px] text-white leading-[150%] border-none"
-                      >
-                        {character?.ability1 || "지도력"}
-                      </p>
-                    </div>
-                    <div
-                      className="flex-1 bg-[#BAE3F9] flex flex-col items-center justify-center border-none"
-                      style={{ fontFamily: "DNFBitBitv2, monospace" }}
-                    >
-                      <p
-                        style={{ fontFamily: "DNFBitBitv2, monospace" }}
-                        className="text-[100px] text-black leading-none border-none"
-                      >
-                        {skill1Value}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex-1 flex flex-col border-none">
-                    <div
-                      className="flex-1 bg-[#0068B7] flex flex-col items-center justify-center border-none"
-                      style={{ fontFamily: "DNFBitBitv2, monospace" }}
-                    >
-                      <p
-                        style={{ fontFamily: "DNFBitBitv2, monospace" }}
-                        className="text-[69px] text-white leading-[150%] border-none"
-                      >
-                        {character?.ability2 || "결단력"}
-                      </p>
-                    </div>
-                    <div
-                      className="flex-1 bg-[#BAE3F9] flex flex-col items-center justify-center border-none"
-                      style={{ fontFamily: "DNFBitBitv2, monospace" }}
-                    >
-                      <p
-                        style={{ fontFamily: "DNFBitBitv2, monospace" }}
-                        className="text-[100px] text-black leading-none border-none"
-                      >
-                        {skill2Value}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 flex items-center justify-center z-10">
-                    <div className="w-[21px] bg-black h-[220px] rounded-t-full rounded-b-full"></div>
-                  </div>
-                </div>
-                <div className="w-[460px]"></div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="button-container flex items-center justify-center z-30 flex-row mb-[358px]">
-        {!isImageUploadComplete ? (
-          <div className="flex flex-col items-center gap-4">
-            <div className="text-[128px] text-[#451F0D] font-bold">
-              이미지 업로드중...
-            </div>
-          </div>
-        ) : isPrinting ? (
-          <div className="flex flex-col items-center gap-4">
-            <div className="text-[128px] text-[#451F0D] font-bold">
-              출력 중입니다. 잠시만 기다려 주세요.
-            </div>
-          </div>
-        ) : (
-          <div className="w-[1594px] flex flex-row items-center justify-between gap-x-12">
-            <div className="w-[684px]">
-              <Button
-                onClick={handleGoHome}
-                disabled={isRegenerating}
-                className="w-full h-[281px] text-[128px] text-[#451F0D] bg-[#E4BE50] rounded-[60px] font-bold z-20"
-              >
-                처음으로
-              </Button>
-            </div>
-            {localRefreshCount > 0 && (
-              <div className="w-[228px] flex flex-col items-center justify-center gap-4">
-                <Button
-                  onClick={handleRegenerate}
-                  disabled={isRegenerating}
-                  className="w-[228px] h-[228px] text-[128px] text-[#451F0D] bg-[#E4BE50] rounded-full font-bold z-20 flex items-center justify-center p-0 overflow-visible disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="다시 생성"
-                >
-                  <IoMdRefresh style={{ width: "180px", height: "180px" }} />
-                </Button>
-              </div>
-            )}
-            <div className="w-[684px]">
-              <Button
-                onClick={handleTransform}
-                disabled={isRegenerating}
-                className="w-full h-[281px] text-[128px] text-[#451F0D] bg-[#E4BE50] rounded-[60px] font-bold z-20"
-              >
-                출력하기
-              </Button>
             </div>
           </div>
         )}
+
+        {!showWhiteCircle && !showLottieLoader && (
+          <CountdownOverlay
+            isCountingDown={isCountingDown}
+            onCountdownComplete={handleCountdownComplete}
+          />
+        )}
+
+        <ProcessingStatus
+          isUploading={isUploading}
+          showLottieLoader={showLottieLoader}
+          processingMessage={processingMessage}
+        />
+
+        <CameraCorners />
+
+        {!showLottieLoader && (
+          <div className="absolute inset-0 z-35 pointer-events-none scale-110 mt-[100px]">
+            <Image
+              src="/mask.png"
+              alt="overlap"
+              fill
+              className="object-cover"
+              unoptimized
+            />
+          </div>
+        )}
+      </div>
+
+      <div className="absolute bottom-[832px] left-1/2 transform -translate-x-1/2 flex flex-col items-center justify-center z-30 border-[25px] border-[#D3B582] rounded-[60px] w-[1666px] h-[390px] animate-fade-in-up">
+        {showLottieLoader ? (
+          <div className="text-[120px] font-bold text-center text-[#481F0E]">
+            {processingMessage}
+          </div>
+        ) : (
+          <>
+            <div className="text-[79px] font-bold text-center text-[#481F0E]">
+              정면을 바라보고 얼굴이 전체가
+            </div>
+            <div className="text-[79px] font-bold text-center text-[#481F0E]">
+              잘 보이도록 촬영해주세요
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="flex items-center justify-center z-30 flex-row mb-[358px] animate-fade-in-up">
+        <Button
+          onClick={handleTransform}
+          disabled={
+            isCountingDown || showWhiteCircle || isUploading || showLottieLoader
+          }
+          className={`w-[1523px] h-[281px] text-[128px] font-bold z-20 rounded-[60px] border-4 border-[#471F0D] transition-all duration-200 hover:scale-101 active:scale-99 ${
+            isCountingDown || showWhiteCircle || isUploading || showLottieLoader
+              ? "text-[#8B7355] bg-[#A8956B] cursor-not-allowed opacity-50"
+              : "text-[#451F0D] bg-[#E4BE50] hover:bg-[#E4BE50]/90 cursor-pointer"
+          }`}
+        >
+          {isUploading
+            ? "저장 중..."
+            : showLottieLoader
+            ? "변신 중..."
+            : "수군으로 변신하기"}
+        </Button>
       </div>
     </div>
-  );
-}
-
-export default function Home() {
-  return (
-    <Suspense
-      fallback={
-        <div className="w-full h-screen flex items-center justify-center text-[64px]"></div>
-      }
-    >
-      <CompletePageContent />
-    </Suspense>
   );
 }
