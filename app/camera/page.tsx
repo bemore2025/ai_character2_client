@@ -70,25 +70,115 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
     videoElementRef.current = ref;
   }, []);
 
-  const normalizeImageSrc = useCallback((value: string) => {
-    if (!value) return "";
+  const isErrorString = useCallback((value: unknown) => {
+    if (typeof value !== "string") return false;
+    const trimmed = value.trim();
+    return trimmed.startsWith("ERROR:");
+  }, []);
+
+  const isValidImageSrc = useCallback((value: unknown) => {
+    if (typeof value !== "string") return false;
 
     const trimmed = value.trim();
+    if (!trimmed) return false;
+    if (trimmed.startsWith("ERROR:")) return false;
 
-    if (
+    return (
+      trimmed.startsWith("data:image/") ||
       trimmed.startsWith("http://") ||
       trimmed.startsWith("https://") ||
       trimmed.startsWith("blob:")
-    ) {
-      return trimmed;
-    }
-
-    if (trimmed.startsWith("data:image/")) {
-      return trimmed;
-    }
-
-    return `data:image/png;base64,${trimmed}`;
+    );
   }, []);
+
+  const normalizeImageSrc = useCallback(
+    (value: string) => {
+      if (!value) return "";
+
+      const trimmed = value.trim();
+
+      if (!trimmed) return "";
+      if (trimmed.startsWith("ERROR:")) return "";
+
+      if (
+        trimmed.startsWith("http://") ||
+        trimmed.startsWith("https://") ||
+        trimmed.startsWith("blob:") ||
+        trimmed.startsWith("data:image/")
+      ) {
+        return trimmed;
+      }
+
+      const looksLikeBase64 =
+        trimmed.length > 100 &&
+        /^[A-Za-z0-9+/=\s_-]+$/.test(trimmed.replace(/\n/g, "").replace(/\r/g, ""));
+
+      if (looksLikeBase64) {
+        return `data:image/png;base64,${trimmed}`;
+      }
+
+      return "";
+    },
+    []
+  );
+
+  const extractImageUrlFromPollingResult = useCallback(
+    (resultData: unknown) => {
+      if (!resultData) return "";
+
+      if (typeof resultData === "string") {
+        return normalizeImageSrc(resultData);
+      }
+
+      if (typeof resultData === "object") {
+        const obj = resultData as Record<string, unknown>;
+
+        const candidates = [
+          obj.result_image_data_url,
+          obj.background_removed_image_url,
+          obj.result_image_url,
+          obj.generated_image_url,
+          obj.image_url,
+          obj.result,
+          obj.result_image_b64,
+        ];
+
+        for (const candidate of candidates) {
+          if (typeof candidate === "string") {
+            const normalized = normalizeImageSrc(candidate);
+            if (normalized) return normalized;
+          }
+        }
+      }
+
+      return "";
+    },
+    [normalizeImageSrc]
+  );
+
+  const extractErrorMessageFromPollingResult = useCallback(
+    (resultData: unknown) => {
+      if (!resultData) return "";
+
+      if (typeof resultData === "string" && isErrorString(resultData)) {
+        return resultData;
+      }
+
+      if (typeof resultData === "object") {
+        const obj = resultData as Record<string, unknown>;
+        const candidates = [obj.error, obj.message, obj.result];
+
+        for (const candidate of candidates) {
+          if (typeof candidate === "string" && isErrorString(candidate)) {
+            return candidate;
+          }
+        }
+      }
+
+      return "";
+    },
+    [isErrorString]
+  );
 
   const uploadPhotoToSupabase = async (photoBlob: Blob, fileName: string) => {
     try {
@@ -174,29 +264,18 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
 
         if (pollingResult.success && pollingResult.data?.result) {
           const resultData = pollingResult.data.result;
-          let backgroundImageUrl = "";
 
-          if (typeof resultData === "string") {
-            backgroundImageUrl = normalizeImageSrc(resultData);
-          } else if (
-            resultData &&
-            typeof resultData === "object" &&
-            "background_removed_image_url" in resultData &&
-            resultData.background_removed_image_url
-          ) {
-            backgroundImageUrl = normalizeImageSrc(
-              String(resultData.background_removed_image_url)
-            );
-          } else if (
-            resultData &&
-            typeof resultData === "object" &&
-            "result_image_url" in resultData &&
-            resultData.result_image_url
-          ) {
-            backgroundImageUrl = normalizeImageSrc(
-              String(resultData.result_image_url)
-            );
+          const explicitError = extractErrorMessageFromPollingResult(resultData);
+          if (explicitError) {
+            console.error("[Camera] Polling returned error result:", explicitError);
+            toast("이미지 생성 실패", {
+              description: explicitError.replace(/^ERROR:\s*/, ""),
+            });
+            setShowLottieLoader(false);
+            return;
           }
+
+          const backgroundImageUrl = extractImageUrlFromPollingResult(resultData);
 
           console.log(
             "[Camera] Final image src preview:",
@@ -207,7 +286,7 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
             backgroundImageUrl?.slice?.(0, 120)
           );
 
-          if (backgroundImageUrl) {
+          if (isValidImageSrc(backgroundImageUrl)) {
             setImageData({
               characterId,
               situation: situation || "변신",
@@ -232,8 +311,9 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
               `/complete?character=${characterId}&jobId=${saveResult.jobId}`
             );
           } else {
-            toast("이미지 URL을 찾을 수 없습니다", {
-              description: "생성된 이미지 URL을 찾을 수 없습니다.",
+            console.error("[Camera] Invalid image result:", resultData);
+            toast("이미지 생성 실패", {
+              description: "생성된 결과가 올바른 이미지 형식이 아닙니다.",
             });
             setShowLottieLoader(false);
           }
@@ -255,7 +335,15 @@ function CameraClient({ characterId, situation }: CameraClientProps) {
         setShowLottieLoader(false);
       }
     },
-    [characterId, situation, normalizeImageSrc, router, setImageData]
+    [
+      characterId,
+      situation,
+      router,
+      setImageData,
+      extractErrorMessageFromPollingResult,
+      extractImageUrlFromPollingResult,
+      isValidImageSrc,
+    ]
   );
 
   const captureAndUploadPhoto = useCallback(async () => {
