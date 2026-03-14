@@ -1,5 +1,5 @@
 "use client";
-
+// 뻐킹!!!!
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { useRouter, useSearchParams } from "next/navigation";
