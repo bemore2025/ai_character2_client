@@ -1,5 +1,5 @@
 "use client";
-// 뻐킹!!!!
+
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -471,17 +471,7 @@ function CompletePageContent() {
     if (imageParam) return;
 
     addDebugInfo("자동 프로세스 시작 준비");
-    const timer = setTimeout(async () => {
-      // ✅ 1. QR 자리 먼저 만들기
-      const placeholderUrl = `${window.location.origin}/complete?t=${Date.now()}`;
-      setQrCodeUrl(placeholderUrl);
-      setShowQrInCard(true);
-      addDebugInfo("QR 자리 표시 완료");
-
-      //✅ 2. QR이 화면에 그려질 때까지 1.5초 기다리기
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-
-      // ✅ 3. QR이 있는 상태에서 카드 캡처 + 업로드
+    const timer = setTimeout(() => {
       addDebugInfo("자동 프로세스 시작");
       captureAndUploadImage();
     }, 0);
