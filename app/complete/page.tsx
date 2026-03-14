@@ -228,8 +228,8 @@ function CompletePageContent() {
 
   useEffect(() => {
     console.log("=== Complete 페이지 진입 - 재생성 카운트 초기화 ===");
-    localStorage.setItem("regenerateCount", "2");
-    setLocalRefreshCount(2);
+    localStorage.setItem("regenerateCount", "1");
+    setLocalRefreshCount(1);
   }, []);
 
   useEffect(() => {
