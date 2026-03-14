@@ -930,7 +930,7 @@ function CompletePageContent() {
                   crossOrigin="anonymous"
                   src={renderImageSrc}
                   alt={character?.role || "character"}
-                  className="cartoon-image object-contain w-[1348px] h-[2050px] rounded-[40px]"
+                  className="cartoon-image object-cover w-[1348px] h-[2050px] rounded-[40px]"
                 />
               ) : (
                 <div className="w-[1348px] h-[2050px] rounded-[40px] bg-[#d9ecfb]" />
